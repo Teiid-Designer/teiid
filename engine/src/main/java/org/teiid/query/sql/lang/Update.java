@@ -215,7 +215,7 @@ public class Update extends ProcedureContainer implements FilteredCommand {
 	 * Return a copy of this Update.
 	 * @return Deep clone
 	 */
-	public Object clone() {
+	public Update clone() {
 		Update copy = new Update();
 		
 	    if(group != null) { 
