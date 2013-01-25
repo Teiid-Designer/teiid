@@ -121,6 +121,23 @@ public class CommandCollectorVisitor extends LanguageVisitor {
     public void visit(WithQueryCommand obj) {
     	this.commands.add(obj.getCommand());
     }
+
+    public List<Command> findCommands(Command command) {
+        final boolean visitCommands = command instanceof SetQuery;
+        PreOrderNavigator navigator = new PreOrderNavigator(this) {
+
+            @Override
+            protected void visitNode(LanguageObject obj) {
+                if (!visitCommands && obj instanceof Command) {
+                    return;
+                }
+                super.visitNode(obj);
+            }
+
+        };
+        command.acceptVisitor(navigator);
+        return getCommands();
+    }
     
     /**
      * Helper to quickly get the commands from obj
@@ -129,20 +146,7 @@ public class CommandCollectorVisitor extends LanguageVisitor {
      */
     public static final List<Command> getCommands(Command command) {
         CommandCollectorVisitor visitor = new CommandCollectorVisitor();
-        final boolean visitCommands = command instanceof SetQuery;
-        PreOrderNavigator navigator = new PreOrderNavigator(visitor) {
-
-        	@Override
-        	protected void visitNode(LanguageObject obj) {
-        		if (!visitCommands && obj instanceof Command) {
-    				return;
-        		}
-        		super.visitNode(obj);
-        	}
-        	
-        };
-        command.acceptVisitor(navigator);
-        return visitor.getCommands();
+        return visitor.findCommands(command);
     }
     
 }

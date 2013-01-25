@@ -114,7 +114,12 @@ public class ValueIteratorProviderCollectorVisitor extends LanguageVisitor {
     public void visit(ScalarSubquery obj) {
         this.valueIteratorProviders.add(obj);
     }
-    
+
+    public List<SubqueryContainer> findValueIteratorProviders(LanguageObject obj) {
+        PreOrderNavigator.doVisit(obj, this);
+        return getValueIteratorProviders();
+    }
+
     /**
      * Helper to quickly get the ValueIteratorProvider instances from obj
      * @param obj Language object
@@ -122,13 +127,12 @@ public class ValueIteratorProviderCollectorVisitor extends LanguageVisitor {
      */
     public static final List<SubqueryContainer<?>> getValueIteratorProviders(LanguageObject obj) {
         ValueIteratorProviderCollectorVisitor visitor = new ValueIteratorProviderCollectorVisitor();
-        PreOrderNavigator.doVisit(obj, visitor);
-        return visitor.getValueIteratorProviders();
+        return visitor.findValueIteratorProviders(obj);
     }
 
 	public static final void getValueIteratorProviders(LanguageObject obj, List<SubqueryContainer<?>> valueIteratorProviders) {
 		ValueIteratorProviderCollectorVisitor visitor = new ValueIteratorProviderCollectorVisitor(valueIteratorProviders);
-        PreOrderNavigator.doVisit(obj, visitor);
+		visitor.findValueIteratorProviders(obj);
 	}
           	
     public static final List<SubqueryContainer<?>> getValueIteratorProviders(Collection<? extends LanguageObject> languageObjects) {
@@ -138,7 +142,7 @@ public class ValueIteratorProviderCollectorVisitor extends LanguageVisitor {
     	List<SubqueryContainer<?>> result = new LinkedList<SubqueryContainer<?>>();
         ValueIteratorProviderCollectorVisitor visitor = new ValueIteratorProviderCollectorVisitor(result);
         for (LanguageObject obj : languageObjects) {
-            PreOrderNavigator.doVisit(obj, visitor);
+            visitor.findValueIteratorProviders(obj);
         }
         return result;
     }            

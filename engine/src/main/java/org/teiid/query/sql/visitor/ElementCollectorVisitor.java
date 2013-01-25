@@ -25,9 +25,9 @@ package org.teiid.query.sql.visitor;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-
 import org.teiid.query.QueryPlugin;
 import org.teiid.query.sql.LanguageObject;
 import org.teiid.query.sql.LanguageVisitor;
@@ -52,6 +52,15 @@ public class ElementCollectorVisitor extends LanguageVisitor {
     private Collection<? super ElementSymbol> elements;
     private boolean aggsOnly;
 
+    /**
+     * Construct a new visitor with a default returning collection
+     * 
+     * @param removeDuplicates 
+     */
+    public ElementCollectorVisitor(boolean removeDuplicates) {
+        this(removeDuplicates ? new HashSet<ElementSymbol>() : new ArrayList<ElementSymbol>());
+    }
+    
     /**
      * Construct a new visitor with the specified collection, which should
      * be non-null.
@@ -162,6 +171,25 @@ public class ElementCollectorVisitor extends LanguageVisitor {
     
     public static final Collection<ElementSymbol> getAggregates(LanguageObject obj, boolean removeDuplicates) {
     	return getElements(obj, removeDuplicates, false, true);
+    }
+    
+    public Collection<? super ElementSymbol> findElements(LanguageObject obj) {
+        return findElements(obj, false);
+    }
+
+    public Collection<? super ElementSymbol> findElements(LanguageObject obj, boolean useDeepIteration) {
+        return findElements(obj, useDeepIteration, false);
+    }
+    
+    public Collection<? super ElementSymbol>  findElements(LanguageObject obj, boolean useDeepIteration, boolean aggsOnly) {
+        this.aggsOnly = aggsOnly;
+        if (useDeepIteration){
+            DeepPreOrderNavigator.doVisit(obj, this);
+        } else {
+            PreOrderNavigator.doVisit(obj, this);
+        }
+        
+        return elements;
     }
 
 
