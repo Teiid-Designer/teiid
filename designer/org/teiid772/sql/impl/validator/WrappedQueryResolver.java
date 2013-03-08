@@ -7,10 +7,14 @@
 */
 package org.teiid772.sql.impl.validator;
 
+import java.util.List;
 import org.teiid.designer.query.IQueryResolver;
 import org.teiid.designer.query.metadata.IQueryMetadataInterface;
+import org.teiid.designer.query.sql.symbol.IElementSymbol;
 import org.teiid.query.resolver.QueryResolver;
 import org.teiid.query.sql.lang.Command;
+import org.teiid.query.sql.lang.DynamicCommand;
+import org.teiid.query.sql.proc.CreateUpdateProcedureCommand;
 import org.teiid.query.sql.symbol.GroupSymbol;
 import org.teiid772.sql.impl.CrossQueryMetadata;
 
@@ -27,4 +31,24 @@ public class WrappedQueryResolver implements IQueryResolver<Command, GroupSymbol
         QueryResolver.resolveCommand(command, gSymbol, commandType, cqMetadata);
     }
 
+    @Override
+    public void postResolveCommand(Command command, GroupSymbol gSymbol, int commandType,
+                                   IQueryMetadataInterface metadata, List<IElementSymbol> projectedSymbols) {
+
+        if (command instanceof CreateUpdateProcedureCommand) {
+
+            /**
+             * This was added to designer to avoid a validation failure, see TEIIDDES-624
+             */
+            CreateUpdateProcedureCommand updateCommand = (CreateUpdateProcedureCommand) command;
+
+            if (updateCommand.getResultsCommand() instanceof DynamicCommand) {
+                DynamicCommand dynamicCommand = (DynamicCommand) updateCommand.getResultsCommand();
+
+                if (dynamicCommand.isAsClauseSet()) {
+                    updateCommand.setProjectedSymbols(projectedSymbols);
+                }
+            }
+        }
+    }
 }
