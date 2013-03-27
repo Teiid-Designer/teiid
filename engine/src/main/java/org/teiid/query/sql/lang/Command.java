@@ -293,4 +293,9 @@ public abstract class Command
     public boolean returnsResultSet() {
         return false;
     }
+    
+    @Override
+    public List<? extends SingleElementSymbol> getResultSetColumns() {
+        return getProjectedSymbols();
+    }
 }
