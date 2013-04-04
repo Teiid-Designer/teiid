@@ -19,6 +19,7 @@ public final class Messages extends NLS {
 
     public static String mergeVdbUnsupported;
     
+    public static String dynamicVdbInvalidName;
     public static String JarDeploymentJarNotFound;
     public static String JarDeploymentFailed;
     public static String JarDeploymentJarNotReadable;
