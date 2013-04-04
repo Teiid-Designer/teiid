@@ -50,6 +50,7 @@ import org.teiid.designer.runtime.spi.ITeiidJdbcInfo;
 import org.teiid.designer.runtime.spi.ITeiidServer;
 import org.teiid.designer.runtime.spi.ITeiidTranslator;
 import org.teiid.designer.runtime.spi.ITeiidVdb;
+import org.teiid.designer.runtime.spi.TeiidPropertyDefinition;
 import org.teiid.jdbc.TeiidDriver;
 import org.teiid.logging.LogManager;
 
@@ -63,6 +64,7 @@ import org.teiid.logging.LogManager;
 public class ExecutionAdmin implements IExecutionAdmin {
 
     private static String PLUGIN_ID = "org.teiid.8.3.x";  //$NON-NLS-1$
+    private static String DYNAMIC_VDB_SUFFIX = "-vdb.xml"; //$NON-NLS-1$
     
     /**
      * Test VDB model
@@ -167,16 +169,43 @@ public class ExecutionAdmin implements IExecutionAdmin {
     public void deployVdb( IFile vdbFile ) throws Exception {
         ArgCheck.isNotNull(vdbFile, "vdbFile"); //$NON-NLS-1$
 
-        String vdbName = vdbFile.getFullPath().lastSegment();
-        String vdbNameNoExt = vdbFile.getFullPath().removeFileExtension().lastSegment();
+        String vdbDeploymentName = vdbFile.getFullPath().lastSegment();
+        String vdbName = vdbFile.getFullPath().removeFileExtension().lastSegment();
+    
+        doDeployVdb(vdbDeploymentName, vdbName, 1, vdbFile.getContents());
+    }
+    
+    @Override
+    public void deployDynamicVdb( String deploymentName, InputStream inStream ) throws Exception {
+        ArgCheck.isNotNull(deploymentName, "deploymentName"); //$NON-NLS-1$
+        ArgCheck.isNotNull(inStream, "inStream"); //$NON-NLS-1$
+
+        // Check dynamic VDB deployment name
+        if(!deploymentName.endsWith(DYNAMIC_VDB_SUFFIX)) {
+            throw new Exception(NLS.bind(Messages.dynamicVdbInvalidName, deploymentName));
+        }
         
-        admin.deploy(vdbName, vdbFile.getContents());
-              
+        // Get VDB name
+        String vdbName = deploymentName.substring(0, deploymentName.indexOf(DYNAMIC_VDB_SUFFIX));
+        
+        // Deploy the VDB
+        // TODO: Dont assume vdbVersion
+        doDeployVdb(deploymentName,vdbName,1,inStream);
+    }
+    
+    private void doDeployVdb(String deploymentName, String vdbName, int vdbVersion, InputStream inStream) throws Exception {
+        admin.deploy(deploymentName, inStream);
+        // Give a 0.5 sec pause for the VDB to finish loading metadata.
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+        }   
+                      
         // Refresh VDBs list
         refreshVDBs();
 
         // TODO should get version from vdbFile
-        VDB vdb = admin.getVDB(vdbNameNoExt, 1);
+        VDB vdb = admin.getVDB(vdbName, vdbVersion);
 
         // If the VDB is still loading, refresh again and potentially start refresh job
         if(vdb.getStatus().equals(VDB.Status.LOADING) && vdb.getValidityErrors().isEmpty()) {
@@ -187,11 +216,11 @@ public class ExecutionAdmin implements IExecutionAdmin {
             }   
             // Refresh again to update vdb states
             refreshVDBs();
-            vdb = admin.getVDB(vdbNameNoExt, 1);
+            vdb = admin.getVDB(vdbName, vdbVersion);
             // Determine if still loading, if so start refresh job.  User will get dialog that the
             // vdb is still loading - and try again in a few seconds
             if(vdb.getStatus().equals(VDB.Status.LOADING) && vdb.getValidityErrors().isEmpty()) {
-                final Job refreshVDBsJob = new RefreshVDBsJob(vdbNameNoExt);
+                final Job refreshVDBsJob = new RefreshVDBsJob(vdbName);
                 refreshVDBsJob.schedule();
             }
         }
@@ -199,6 +228,11 @@ public class ExecutionAdmin implements IExecutionAdmin {
         this.eventManager.notifyListeners(ExecutionConfigurationEvent.createDeployVDBEvent(vdb.getName()));
     }
     
+    @Override
+    public String getSchema(String vdbName, int vdbVersion, String modelName) throws Exception {
+        return admin.getSchema(vdbName, vdbVersion, modelName, null, null);
+    }
+        
     @Override
     public void disconnect() {
     	// 
@@ -389,6 +423,35 @@ public class ExecutionAdmin implements IExecutionAdmin {
         }
     }
     
+    @Override
+    public void deployDriver(File jarOrRarFile) throws Exception {
+        if(jarOrRarFile.exists()) {
+            if(jarOrRarFile.canRead()) {
+                String fileName = jarOrRarFile.getName();
+                InputStream iStream = null;
+                try {
+                    iStream = new FileInputStream(jarOrRarFile);
+                } catch (FileNotFoundException ex) {
+                    LogManager.logError(getClass().getSimpleName(), ex, NLS.bind(Messages.JarDeploymentJarNotFound, jarOrRarFile.getPath()));
+                    throw ex;
+                }
+                try {
+                    admin.deploy(fileName, iStream);
+                } catch (Exception ex) {
+                    // Jar deployment failed
+                    LogManager.logError(getClass().getSimpleName(), ex, NLS.bind(Messages.JarDeploymentFailed, jarOrRarFile.getPath()));
+                    throw ex;
+                }
+            } else {
+                // Could not read the file
+                LogManager.logError(getClass().getSimpleName(), NLS.bind(Messages.JarDeploymentJarNotReadable, jarOrRarFile.getPath()));
+            }
+        } else {
+            // The file was not found
+            LogManager.logError(getClass().getSimpleName(), NLS.bind(Messages.JarDeploymentJarNotFound, jarOrRarFile.getPath()));
+        }
+    }
+
     /**
      * @return the server who owns this admin object (never <code>null</code>)
      */
@@ -405,6 +468,46 @@ public class ExecutionAdmin implements IExecutionAdmin {
     @Override
     public Collection<ITeiidTranslator> getTranslators() {
         return Collections.unmodifiableCollection(translatorByNameMap.values());
+    }
+
+    @Override
+    public Set<String> getDataSourceTemplateNames() throws Exception {
+        return this.admin.getDataSourceTemplateNames();
+    }
+    
+    @Override
+    public Collection<TeiidPropertyDefinition> getTemplatePropertyDefns(String templateName) throws Exception {
+        Collection<? extends PropertyDefinition> propDefs = this.admin.getTemplatePropertyDefinitions(templateName);
+
+        Collection<TeiidPropertyDefinition> teiidPropDefns = new ArrayList<TeiidPropertyDefinition>();
+        
+        for (PropertyDefinition propDefn : propDefs) {
+            TeiidPropertyDefinition teiidPropertyDefn = new TeiidPropertyDefinition();
+            
+            teiidPropertyDefn.setName(propDefn.getName());
+            teiidPropertyDefn.setDisplayName(propDefn.getDisplayName());
+            teiidPropertyDefn.setDescription(propDefn.getDescription());
+            teiidPropertyDefn.setPropertyTypeClassName(propDefn.getPropertyTypeClassName());
+            teiidPropertyDefn.setDefaultValue(propDefn.getDefaultValue());
+            teiidPropertyDefn.setAllowedValues(propDefn.getAllowedValues());
+            teiidPropertyDefn.setModifiable(propDefn.isModifiable());
+            teiidPropertyDefn.setConstrainedToAllowedValues(propDefn.isConstrainedToAllowedValues());
+            teiidPropertyDefn.setAdvanced(propDefn.isAdvanced());
+            teiidPropertyDefn.setRequired(propDefn.isRequired());
+            teiidPropertyDefn.setMasked(propDefn.isMasked());
+            
+            teiidPropDefns.add(teiidPropertyDefn);
+        }
+        
+        return teiidPropDefns;
+    }
+    
+    /* (non-Javadoc)
+     * @see org.teiid.designer.runtime.spi.IExecutionAdmin#getDataSourceProperties(java.lang.String)
+     */
+    @Override
+    public Properties getDataSourceProperties(String name) throws Exception {
+        return this.admin.getDataSource(name);
     }
 
     @Override
@@ -615,6 +718,20 @@ public class ExecutionAdmin implements IExecutionAdmin {
         }
     }
     
+    @Override
+    public void undeployDynamicVdb( String vdbName) throws Exception {
+        this.admin.undeploy(appendDynamicVdbSuffix(vdbName));
+        ITeiidVdb vdb = getVdb(vdbName);
+
+        refreshVDBs();
+
+        if (vdb == null) {
+
+        } else {
+            this.eventManager.notifyListeners(ExecutionConfigurationEvent.createUnDeployVDBEvent(vdb.getName()));
+        }
+    }
+
     /**
      * 
      * @param vdbName the vdb name
@@ -646,6 +763,19 @@ public class ExecutionAdmin implements IExecutionAdmin {
             return vdbName;
         
         return vdbName + ITeiidVdb.VDB_DOT_EXTENSION;
+    }
+    
+    /**
+     * Append the suffix for dynamic VDB to the vdb name if not already appended.
+     * 
+     * @param vdbName
+     * @return
+     */
+    private String appendDynamicVdbSuffix(String vdbName) {
+        if (vdbName.endsWith(ITeiidVdb.DYNAMIC_VDB_SUFFIX))
+            return vdbName;
+        
+        return vdbName + ITeiidVdb.DYNAMIC_VDB_SUFFIX;
     }
     
     @Override

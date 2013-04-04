@@ -129,7 +129,7 @@ public class TeiidVdb implements ITeiidVdb, Comparable<TeiidVdb> {
 
     @Override
     public boolean hasModels() {
-        return vdb.getModels().isEmpty();
+        return !vdb.getModels().isEmpty();
     }
     
     @Override
