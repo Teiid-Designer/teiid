@@ -21,6 +21,7 @@ public final class Messages extends NLS {
     public static String JarDeploymentFailed;
     public static String JarDeploymentJarNotReadable;
     
+    public static String dynamicVdbInvalidName;
     public static String jdcbSourceForClassNameNotFound;
     public static String dataSourceTypeDoesNotExist;
     public static String errorCreatingDataSource;
