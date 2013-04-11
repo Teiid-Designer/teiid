@@ -65,8 +65,6 @@ public class DataTypeManagerService implements IDataTypeManagerService {
 
     @Override
     public Class<?> getDataTypeClass(String name) {
-        ArgCheck.isNotNull(name);
-
         Class<?> dataTypeClass = DataTypeManager.getDataTypeClass(name);
         return dataTypeClass != null ? dataTypeClass : null;
     }
