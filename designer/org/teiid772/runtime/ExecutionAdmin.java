@@ -60,6 +60,7 @@ public class ExecutionAdmin implements IExecutionAdmin {
 
     private static String PLUGIN_ID = "org.teiid.7.7.x";  //$NON-NLS-1$
     private static String DYNAMIC_VDB_SUFFIX = "-vdb.xml"; //$NON-NLS-1$
+    private static int VDB_LOADING_TIMEOUT_SEC = 300;
     
     /**
      * Test VDB model
@@ -753,15 +754,10 @@ public class ExecutionAdmin implements IExecutionAdmin {
          */
         
         private void waitForVDBLoad(String vdbName) throws Exception {
-            int timeoutInSecs = 30;  // time out after 30secs
-            
-            long waitUntil = System.currentTimeMillis() + timeoutInSecs*1000;
-            if (timeoutInSecs < 0) {
-                waitUntil = Long.MAX_VALUE;
-            }
+            long waitUntil = System.currentTimeMillis() + VDB_LOADING_TIMEOUT_SEC*1000;
             boolean first = true;
             do {
-                // Pause 5 sec before subsequent attempts
+                // Pauses 5 sec
                 if (!first) {
                     try {
                         Thread.sleep(5000);
@@ -771,26 +767,25 @@ public class ExecutionAdmin implements IExecutionAdmin {
                 } else {
                     first = false;
                 }
-                // Get the VDB using admin API
+                
+                // Refreshes from adminApi
+                refresh();
+                
+                // Get the VDB
                 ITeiidVdb vdb = getVdb(vdbName);
-                // Determine if VDB is loading, or whether to wait
+                
+                // Stop waiting if any conditions have been met
                 if(vdb!=null) {
-                    // return if no models in VDB, or VDB has errors (done loading)
-                    if(vdb.hasModels() || vdb.hasFailed() || 
-                       vdb.wasRemoved() || vdb.isActive()) {
-                        refresh();
-                        return;
-                    }
-                    // If the VDB Status is LOADING, but a validity error was found - return
-                    if(vdb.isLoading() && !vdb.getValidityErrors().isEmpty()) {
-                        refresh();
-                        return;
-                    }
+                	boolean hasValidityErrors = !vdb.getValidityErrors().isEmpty();
+                	if(  !vdb.hasModels() || vdb.hasFailed()  || !vdb.isLoading() 
+                	   || vdb.isActive()  || vdb.wasRemoved() || hasValidityErrors ) {
+                		return;
+                	} 
                 } else {
-                    refresh();
                     return;
                 }
             } while (System.currentTimeMillis() < waitUntil);
+            
             refresh();
             return;
         }
