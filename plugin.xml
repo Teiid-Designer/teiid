@@ -7,7 +7,22 @@
             class="org.teiid83.runtime.ExecutionAdminFactory">
          <version
                major="8"
-               minor="x"
+               minor="0"
+               micro="x">
+         </version>
+         <version
+               major="8"
+               minor="1"
+               micro="x">
+         </version>
+         <version
+               major="8"
+               minor="2"
+               micro="x">
+         </version>
+         <version
+               major="8"
+               minor="3"
                micro="x">
          </version>
       </runtimeFactory>
