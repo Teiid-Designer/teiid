@@ -316,7 +316,7 @@ public class RowBasedSecurityHelper {
 	 * @throws QueryPlannerException 
 	 */
 	private static void validateAndPlanSubqueries(LanguageObject object, GroupSymbol gs, RelationalPlanner planner) throws QueryValidatorException, QueryPlannerException, QueryMetadataException, TeiidComponentException {
-		List<SubqueryContainer<?>> subqueries = ValueIteratorProviderCollectorVisitor.getValueIteratorProviders(object);
+		List<SubqueryContainer> subqueries = ValueIteratorProviderCollectorVisitor.getValueIteratorProviders(object);
 		if (subqueries.isEmpty()) {
 			return;
 		}

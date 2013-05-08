@@ -4,10 +4,10 @@
    <extension
          point="org.teiid.designer.spi.teiidRuntimeClient">
       <runtimeFactory
-            class="org.teiid82.runtime.ExecutionAdminFactory">
+            class="org.teiid84.runtime.ExecutionAdminFactory">
          <version
                major="8"
-               minor="x"
+               minor="4"
                micro="x">
          </version>
       </runtimeFactory>

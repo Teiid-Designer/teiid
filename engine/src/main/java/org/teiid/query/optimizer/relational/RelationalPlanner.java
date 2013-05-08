@@ -333,7 +333,7 @@ public class RelationalPlanner {
         Set<GroupSymbol> groupSymbols = getGroupSymbols(plan);
 
         for (PlanNode node : NodeEditor.findAllNodes(plan, NodeConstants.Types.PROJECT | NodeConstants.Types.SELECT | NodeConstants.Types.JOIN | NodeConstants.Types.SOURCE | NodeConstants.Types.GROUP)) {
-            List<SubqueryContainer<?>> subqueryContainers = node.getSubqueryContainers();
+            List<SubqueryContainer> subqueryContainers = node.getSubqueryContainers();
             planSubqueries(pushdownWith, groups, groupSymbols, node, subqueryContainers, false);
             node.addGroups(GroupsUsedByElementsVisitor.getGroups(node.getCorrelatedReferenceElements()));
         }
@@ -342,7 +342,7 @@ public class RelationalPlanner {
 	public void planSubqueries(
 			Map<String, WithQueryCommand> pushdownWith,
 			Set<GroupSymbol> groups, Set<GroupSymbol> groupSymbols,
-			PlanNode node, List<SubqueryContainer<?>> subqueryContainers, boolean isStackEntry)
+			PlanNode node, List<SubqueryContainer> subqueryContainers, boolean isStackEntry)
 			throws QueryMetadataException, TeiidComponentException,
 			QueryPlannerException {
         if (subqueryContainers.isEmpty()){
@@ -758,7 +758,7 @@ public class RelationalPlanner {
 			addNestedCommand(sourceNode, container.getGroup(), container, c, false, true);
 		}
 
-		List<SubqueryContainer<?>> subqueries = ValueIteratorProviderCollectorVisitor.getValueIteratorProviders(container);
+		List<SubqueryContainer> subqueries = ValueIteratorProviderCollectorVisitor.getValueIteratorProviders(container);
 
 		if (c == null
 				/* we cheat with the temp table capabilities a little - it actual supports any non-pushdown required function and non-correlated subquery
@@ -788,13 +788,13 @@ public class RelationalPlanner {
 		return false;
 	}
 
-	private void planSubqueries(ProcedureContainer container, Command c, List<SubqueryContainer<?>> subqueries, boolean initial)
+	private void planSubqueries(ProcedureContainer container, Command c, List<SubqueryContainer> subqueries, boolean initial)
 			throws QueryPlannerException, QueryMetadataException,
 			TeiidComponentException {
 		
 		boolean isSourceTemp = c == null && container.getGroup().isTempTable() && metadata.getModelID(container.getGroup().getMetadataID()) == TempMetadataAdapter.TEMP_MODEL;
 		
-		for (SubqueryContainer<?> subqueryContainer : subqueries) {
+		for (SubqueryContainer subqueryContainer : subqueries) {
 			if (isSourceTemp) {
 				if (subqueryContainer.getCommand().getCorrelatedReferences() == null) {
 					if (subqueryContainer instanceof ScalarSubquery) {

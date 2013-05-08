@@ -22,10 +22,11 @@
 
 package org.teiid.query.sql.lang;
 
+
 public interface FilteredCommand {
 
 	Criteria getCriteria();
 	
 	void setCriteria(Criteria criteria);
-	
+
 }

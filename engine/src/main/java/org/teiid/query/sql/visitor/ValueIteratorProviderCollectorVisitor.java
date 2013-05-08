@@ -28,6 +28,7 @@ import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 
+import org.teiid.designer.query.sql.IValueIteratorProviderCollectorVisitor;
 import org.teiid.query.sql.LanguageObject;
 import org.teiid.query.sql.LanguageVisitor;
 import org.teiid.query.sql.lang.ExistsCriteria;
@@ -48,16 +49,17 @@ import org.teiid.query.sql.symbol.ScalarSubquery;
  * the visitor, run the visitor, and get the collection. 
  * The public visit() methods should NOT be called directly.</p>
  */
-public class ValueIteratorProviderCollectorVisitor extends LanguageVisitor {
+public class ValueIteratorProviderCollectorVisitor extends LanguageVisitor
+    implements IValueIteratorProviderCollectorVisitor<LanguageObject, SubqueryContainer> {
 
-    private List<SubqueryContainer<?>> valueIteratorProviders;
+    private List<SubqueryContainer> valueIteratorProviders;
     
     /**
      * Construct a new visitor with the default collection type, which is a 
      * {@link java.util.ArrayList}.  
      */
     public ValueIteratorProviderCollectorVisitor() { 
-        this.valueIteratorProviders = new ArrayList<SubqueryContainer<?>>();
+        this.valueIteratorProviders = new ArrayList<SubqueryContainer>();
     }   
 
 	/**
@@ -65,7 +67,7 @@ public class ValueIteratorProviderCollectorVisitor extends LanguageVisitor {
      * ValueIteratorProvider instances
 	 * @param valueIteratorProviders Collection to accumulate found 
 	 */
-	ValueIteratorProviderCollectorVisitor(List<SubqueryContainer<?>> valueIteratorProviders) { 
+	ValueIteratorProviderCollectorVisitor(List<SubqueryContainer> valueIteratorProviders) { 
 		this.valueIteratorProviders = valueIteratorProviders;
 	}   
     
@@ -75,7 +77,7 @@ public class ValueIteratorProviderCollectorVisitor extends LanguageVisitor {
      * @return Collection of {@link SubqueryContainer}
      * (by default, this is a java.util.ArrayList)
      */
-    public List<SubqueryContainer<?>> getValueIteratorProviders() { 
+    public List<SubqueryContainer> getValueIteratorProviders() { 
         return this.valueIteratorProviders;
     }
     
@@ -115,6 +117,7 @@ public class ValueIteratorProviderCollectorVisitor extends LanguageVisitor {
         this.valueIteratorProviders.add(obj);
     }
 
+    @Override
     public List<SubqueryContainer> findValueIteratorProviders(LanguageObject obj) {
         PreOrderNavigator.doVisit(obj, this);
         return getValueIteratorProviders();
@@ -125,21 +128,21 @@ public class ValueIteratorProviderCollectorVisitor extends LanguageVisitor {
      * @param obj Language object
      * @return java.util.ArrayList of found ValueIteratorProvider
      */
-    public static final List<SubqueryContainer<?>> getValueIteratorProviders(LanguageObject obj) {
+    public static final List<SubqueryContainer> getValueIteratorProviders(LanguageObject obj) {
         ValueIteratorProviderCollectorVisitor visitor = new ValueIteratorProviderCollectorVisitor();
         return visitor.findValueIteratorProviders(obj);
     }
 
-	public static final void getValueIteratorProviders(LanguageObject obj, List<SubqueryContainer<?>> valueIteratorProviders) {
+	public static final void getValueIteratorProviders(LanguageObject obj, List<SubqueryContainer> valueIteratorProviders) {
 		ValueIteratorProviderCollectorVisitor visitor = new ValueIteratorProviderCollectorVisitor(valueIteratorProviders);
 		visitor.findValueIteratorProviders(obj);
 	}
           	
-    public static final List<SubqueryContainer<?>> getValueIteratorProviders(Collection<? extends LanguageObject> languageObjects) {
+    public static final List<SubqueryContainer> getValueIteratorProviders(Collection<? extends LanguageObject> languageObjects) {
     	if (languageObjects == null || languageObjects.isEmpty()) {
     		return Collections.emptyList();
     	}
-    	List<SubqueryContainer<?>> result = new LinkedList<SubqueryContainer<?>>();
+    	List<SubqueryContainer> result = new LinkedList<SubqueryContainer>();
         ValueIteratorProviderCollectorVisitor visitor = new ValueIteratorProviderCollectorVisitor(result);
         for (LanguageObject obj : languageObjects) {
             visitor.findValueIteratorProviders(obj);
