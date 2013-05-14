@@ -156,6 +156,7 @@ public class QueryService implements IQueryService {
                                                         inputParameters.toArray(new FunctionParameter[0]), outputParameter);
 
             fMethod.setPushDown(descriptor.getPushDownLiteral());
+            fMethod.setVarArgs(descriptor.isVariableArgs());
             if (descriptor.isDeterministic()) {
                 fMethod.setDeterminism(Determinism.DETERMINISTIC);
             } else {
