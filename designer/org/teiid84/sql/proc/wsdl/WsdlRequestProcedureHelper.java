@@ -98,13 +98,25 @@ public class WsdlRequestProcedureHelper extends AbstractWsdlHelper implements IW
             headerString.append(ENVELOPE_NS_ALIAS);
             
             if (requestInfo.getNamespaceMap().size()>0 || (getWrapperProcedure().getNamespaceURI() != null &! getWrapperProcedure().getNamespaceURI().isEmpty())){
-                headerString.append(COMMA).append(SPACE).append(DEFAULT).append(SPACE).append(S_QUOTE).append(getWrapperProcedure().getNamespaceURI());
-                headerString.append(S_QUOTE);
+            	
+            	String prefix=requestInfo.getReverseNSMap().get(getWrapperProcedure().getNamespaceURI());
+            	if (isDefaultNS(prefix)) {
+            		headerString.append(COMMA).append(SPACE).append(DEFAULT).append(SPACE).append(S_QUOTE).append(getWrapperProcedure().getNamespaceURI());
+            		headerString.append(S_QUOTE);
+            	}else{
+        			headerString.append(COMMA).append(SPACE).append(S_QUOTE).append(getWrapperProcedure().getNamespaceURI()).append(S_QUOTE).append(SPACE).append(AS).append(SPACE);
+                    headerString.append(prefix);
+        		}
                 for (Entry<String, String> entry: requestInfo.getNamespaceMap().entrySet()){
-                    //If this is the default NS, skip it
+                    //We already added this, so skip it
                     if (entry.getValue().equals(getWrapperProcedure().getNamespaceURI())) break;
-                    headerString.append(COMMA).append(SPACE).append(DEFAULT).append(SPACE).append(S_QUOTE).append(entry.getValue());
-                    headerString.append(S_QUOTE);
+                    prefix=requestInfo.getReverseNSMap().get(entry.getValue());
+                	if (isDefaultNS(prefix)) {
+                		headerString.append(COMMA).append(SPACE).append(DEFAULT).append(SPACE).append(S_QUOTE).append(entry.getValue());
+                	}else{
+            			headerString.append(COMMA).append(SPACE).append(S_QUOTE).append(entry.getValue()).append(S_QUOTE).append(SPACE).append(AS).append(SPACE);
+                        headerString.append(prefix);
+            		}
                 }
             }
             
@@ -123,6 +135,14 @@ public class WsdlRequestProcedureHelper extends AbstractWsdlHelper implements IW
         
         return headerString.toString();
     }
+
+	/**
+	 * @param prefix
+	 * @return
+	 */
+	private boolean isDefaultNS(String prefix) {
+		return prefix!=null && prefix.trim().length()==0;
+	}
     
     private String getPartElementNamespace(IPart part) {
         String partElementNamespace = null;
@@ -149,10 +169,17 @@ public class WsdlRequestProcedureHelper extends AbstractWsdlHelper implements IW
         
         StringBuffer sb = new StringBuffer();
         
-        sb.append(XMLNAMESPACES).append(L_PAREN);
-        sb.append(DEFAULT).append(SPACE).append(S_QUOTE).append(ns==null?getWrapperProcedure().getNamespaceURI():ns).append(S_QUOTE);
-        sb.append(R_PAREN);
+        String prefix=requestInfo.getReverseNSMap().get(ns==null?getWrapperProcedure().getNamespaceURI():ns);
+    	if (isDefaultNS(prefix)) {
+    		 sb.append(DEFAULT).append(SPACE).append(S_QUOTE).append(ns==null?getWrapperProcedure().getNamespaceURI():ns).append(S_QUOTE);
+    	}else{
+    		sb.append(XMLNAMESPACES).append(L_PAREN);
+			sb.append(SPACE).append(S_QUOTE).append(getWrapperProcedure().getNamespaceURI()).append(S_QUOTE).append(SPACE).append(AS).append(SPACE);
+            sb.append(prefix);
+		}
         
+    	sb.append(R_PAREN);
+    	
         return sb.toString();
     }
     
@@ -211,7 +238,9 @@ public class WsdlRequestProcedureHelper extends AbstractWsdlHelper implements IW
         if (!(requestInfo.isMessageServiceMode())) {
             message = requestInfo.getOperation().getInputMessage();
             parts = message.getParts();
-            elementName = getPartElementName(parts[0]);
+            if (parts.length>0) {
+            	elementName = getPartElementName(parts[0]);
+            }
         }
             
         sb.append(convertSqlNameSegment(elementName==null?requestInfo.getOperation().getName():elementName)).append(COMMA).append(SPACE);
