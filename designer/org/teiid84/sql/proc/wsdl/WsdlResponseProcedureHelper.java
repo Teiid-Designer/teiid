@@ -91,7 +91,7 @@ public class WsdlResponseProcedureHelper extends AbstractWsdlHelper implements I
                 String relPath = columnInfo.getRelativePath();
                 if (relPath != null && relPath.length() > 1) {
                     //Strip out default namespace prefix
-                    relPath = relPath.replace(COLON, EMPTY_STR);
+                    //relPath = relPath.replace(COLON, EMPTY_STR);
                     sb.append(SPACE).append(PATH).append(SPACE).append(S_QUOTE)
                             .append(relPath).append(S_QUOTE);
                 }
