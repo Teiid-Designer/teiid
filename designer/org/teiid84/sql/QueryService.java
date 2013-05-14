@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
 import org.teiid.core.types.JDBCSQLTypeInfo;
 import org.teiid.designer.query.IProcedureService;
 import org.teiid.designer.query.IQueryFactory;
@@ -156,6 +157,7 @@ public class QueryService implements IQueryService {
                                                         inputParameters.toArray(new FunctionParameter[0]), outputParameter);
 
             fMethod.setPushDown(descriptor.getPushDownLiteral());
+            fMethod.setVarArgs(descriptor.isVariableArgs());
             if (descriptor.isDeterministic()) {
                 fMethod.setDeterminism(Determinism.DETERMINISTIC);
             } else {
