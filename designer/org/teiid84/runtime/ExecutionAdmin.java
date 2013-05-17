@@ -438,6 +438,7 @@ public class ExecutionAdmin implements IExecutionAdmin {
                 }
                 try {
                     admin.deploy(fileName, iStream);
+                    refreshDataSourceTypes();
                 } catch (Exception ex) {
                     // Jar deployment failed
                     LogManager.logError(getClass().getSimpleName(), ex, NLS.bind(Messages.JarDeploymentFailed, jarOrRarFile.getPath()));
@@ -617,7 +618,7 @@ public class ExecutionAdmin implements IExecutionAdmin {
         refreshTranslators(this.admin.getTranslators());
 
         // populate data source type names set
-        this.dataSourceTypeNames = new HashSet(this.admin.getDataSourceTemplateNames());
+        refreshDataSourceTypes();
 
         // populate data source names list
         refreshDataSourceNames();
@@ -663,6 +664,11 @@ public class ExecutionAdmin implements IExecutionAdmin {
         for (VDB vdb : vdbs) {
             teiidVdbs.put(vdb.getName(), new TeiidVdb(vdb, teiidServer));
         }
+    }
+    
+    protected void refreshDataSourceTypes() throws Exception {
+        // populate data source type names set
+        this.dataSourceTypeNames = new HashSet(this.admin.getDataSourceTemplateNames());
     }
 
     /**

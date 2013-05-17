@@ -32,11 +32,11 @@ public class DataTypeManagerService implements IDataTypeManagerService {
     
     // Data Source Type names supported by the server
     private static final String JDBC = "connector-jdbc"; //$NON-NLS-1$
-    private static final String SALESFORCE = "teiid-connector-salesforce.rar"; //$NON-NLS-1$ 
-    private static final String LDAP = "teiid-connector-ldap.rar"; //$NON-NLS-1$ 
-    private static final String FILE = "teiid-connector-file.rar"; //$NON-NLS-1$ 
+    private static final String SALESFORCE = "salesforce"; //$NON-NLS-1$ 
+    private static final String LDAP = "ldap"; //$NON-NLS-1$ 
+    private static final String FILE = "file"; //$NON-NLS-1$ 
     private static final String JDBC_XA = "connector-jdbc-xa"; //$NON-NLS-1$
-    private static final String WS = "teiid-connector-ws.rar"; //$NON-NLS-1$
+    private static final String WS = "ws"; //$NON-NLS-1$
     private static final String UNKNOWN = "connector-unknown"; //$NON-NLS-1$
 
     static {
