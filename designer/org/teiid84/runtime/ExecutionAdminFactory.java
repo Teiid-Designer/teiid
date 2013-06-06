@@ -7,11 +7,13 @@
 */
 package org.teiid84.runtime;
 
+import java.sql.Driver;
 import org.teiid.designer.query.IQueryService;
 import org.teiid.designer.runtime.spi.IExecutionAdmin;
 import org.teiid.designer.runtime.spi.IExecutionAdminFactory;
 import org.teiid.designer.runtime.spi.ITeiidServer;
 import org.teiid.designer.type.IDataTypeManagerService;
+import org.teiid.jdbc.TeiidDriver;
 import org.teiid84.sql.QueryService;
 import org.teiid84.type.DataTypeManagerService;
 
@@ -37,7 +39,12 @@ public class ExecutionAdminFactory implements IExecutionAdminFactory {
         
         return dataTypeManagerService;
     }
-    
+
+    @Override
+    public Driver getTeiidDriver() {
+        return TeiidDriver.getInstance();
+    }
+
     @Override
     public IQueryService getQueryService() {
         if (queryService == null) {
