@@ -36,7 +36,7 @@ public class DataTypeManagerService implements IDataTypeManagerService {
     private static final String LDAP = "ldap"; //$NON-NLS-1$ 
     private static final String FILE = "file"; //$NON-NLS-1$ 
     private static final String JDBC_XA = "connector-jdbc-xa"; //$NON-NLS-1$
-    private static final String WS = "ws"; //$NON-NLS-1$
+    private static final String WS = "webservice"; //$NON-NLS-1$
     private static final String UNKNOWN = "connector-unknown"; //$NON-NLS-1$
 
     static {
