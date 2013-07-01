@@ -91,6 +91,11 @@
             <!-- Generates the source files from the template for use in 
                 eclipse IDE. Profile called explicity from an eclipse auto builder -->
             <id>generate-javacc</id>
+            <activation>
+                <property>
+                    <name>!skipGenerateJavaCC</name>
+                 </property>
+            </activation>
             <build>
                 <plugins>
                     <plugin>
@@ -275,26 +280,6 @@
                     <verbose>true</verbose>
                     <source>1.6</source>
                     <target>1.6</target>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>javacc-maven-plugin</artifactId>
-                <version>2.4</version>
-                <executions>
-                    <execution>
-                        <id>javacc</id>
-                        <goals>
-                            <goal>javacc</goal>
-                        </goals>
-                    </execution>
-                </executions>
-                <configuration>
-                    <sourceDirectory>${project.basedir}/engine</sourceDirectory>
-                        <includes>
-                            <include>src/main/javacc/**/*.jj</include>
-                        </includes>
-                    <outputDirectory>${project.basedir}/engine/src/main/javacc</outputDirectory>
                 </configuration>
             </plugin>
         </plugins>
