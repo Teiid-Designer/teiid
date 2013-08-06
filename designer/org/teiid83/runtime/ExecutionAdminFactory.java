@@ -14,6 +14,7 @@ import org.teiid.designer.runtime.spi.IExecutionAdminFactory;
 import org.teiid.designer.runtime.spi.ITeiidServer;
 import org.teiid.designer.type.IDataTypeManagerService;
 import org.teiid.jdbc.TeiidDriver;
+import org.teiid83.TeiidRuntimePlugin;
 import org.teiid83.sql.QueryService;
 import org.teiid83.type.DataTypeManagerService;
 
@@ -52,5 +53,10 @@ public class ExecutionAdminFactory implements IExecutionAdminFactory {
         }
         
         return queryService;
+    }
+
+    @Override
+    public String getRuntimePluginPath() {
+        return TeiidRuntimePlugin.getPluginPath();
     }
 }
