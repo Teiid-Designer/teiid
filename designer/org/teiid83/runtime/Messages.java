@@ -42,6 +42,7 @@ public final class Messages extends NLS {
     public static String cannotLoadDriverClass;
     
     public static String procedureServiceTextTableSqlTemplate;
+    public static String procedureServiceTextInvokeHttpTableSqlTemplate;
     public static String procedureServiceXmlGetTextFilesTableSqlTemplate;
     public static String procedureServiceXmlInvokeHttpTableSqlTemplate;
     

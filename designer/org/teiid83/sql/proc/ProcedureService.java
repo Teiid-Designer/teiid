@@ -80,7 +80,20 @@ public class ProcedureService implements IProcedureService, ISQLConstants {
 
             i++;
         }
-        tokens.add(S_QUOTE + metadataFileInfo.getDataFile().getName() + S_QUOTE);
+        
+        String proc = S_QUOTE + metadataFileInfo.getDataFile().getName() + S_QUOTE;
+        if( metadataFileInfo.isUrl() ) {
+            proc = S_QUOTE + GET + S_QUOTE
+                    + COMMA + SPACE + NULL.toLowerCase()
+                    + COMMA + SPACE + S_QUOTE + metadataFileInfo.getFileUrl() + S_QUOTE
+                    + COMMA + SPACE + S_QUOTE + TRUE + S_QUOTE;
+        }
+        tokens.add(proc);
+        
+        if(metadataFileInfo.isUrl()) {
+        	tokens.add(metadataFileInfo.getCharSet());
+        }
+        
         tokens.add(sb.toString());
         
         sb = new StringBuffer();
@@ -124,7 +137,12 @@ public class ProcedureService implements IProcedureService, ISQLConstants {
         tokens.add(sb.toString());
         tokens.add(alias);
         
-        String finalSQLString = NLS.bind(Messages.procedureServiceTextTableSqlTemplate, tokens.toArray(new String[0]));
+        String finalSQLString = null;
+        if(metadataFileInfo.isUrl()) {
+        	finalSQLString = NLS.bind(Messages.procedureServiceTextInvokeHttpTableSqlTemplate, tokens.toArray(new String[0]));
+        } else {
+        	finalSQLString = NLS.bind(Messages.procedureServiceTextTableSqlTemplate, tokens.toArray(new String[0]));
+        }
         return finalSQLString;
     }
     
