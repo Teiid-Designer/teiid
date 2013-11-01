@@ -63,7 +63,7 @@ import org.teiid.logging.LogManager;
  */
 public class ExecutionAdmin implements IExecutionAdmin {
 
-    private static String PLUGIN_ID = "org.teiid.8.3.x";  //$NON-NLS-1$
+    private static String PLUGIN_ID = "org.teiid.8.4.x";  //$NON-NLS-1$
     private static String DYNAMIC_VDB_SUFFIX = "-vdb.xml"; //$NON-NLS-1$
     private static int VDB_LOADING_TIMEOUT_SEC = 300;
     
@@ -148,17 +148,17 @@ public class ExecutionAdmin implements IExecutionAdmin {
     }
 
     @Override
-    public void deleteDataSource( String jndiName ) throws Exception {
+    public void deleteDataSource( String dsName ) throws Exception {
         // Check if exists, return false
-        if (this.dataSourceNames.contains(jndiName)) {
-            this.admin.deleteDataSource(jndiName);
+        if (this.dataSourceNames.contains(dsName)) {
+            this.admin.deleteDataSource(dsName);
 
-            if (!this.admin.getDataSourceNames().contains(jndiName)) {
-                this.dataSourceNames.remove(jndiName);
-                ITeiidDataSource tds = this.dataSourceByNameMap.get(jndiName);
+            if (!this.admin.getDataSourceNames().contains(dsName)) {
+                this.dataSourceNames.remove(dsName);
+                ITeiidDataSource tds = this.dataSourceByNameMap.get(dsName);
 
                 if (tds != null) {
-                    this.dataSourceByNameMap.remove(jndiName);
+                    this.dataSourceByNameMap.remove(dsName);
                     this.eventManager.notifyListeners(ExecutionConfigurationEvent.createRemoveDataSourceEvent(tds));
 
                 }
@@ -269,17 +269,17 @@ public class ExecutionAdmin implements IExecutionAdmin {
 
     @Override
     public ITeiidDataSource getOrCreateDataSource( String displayName,
-                                                  String jndiName,
+                                                  String dsName,
                                                   String typeName,
                                                   Properties properties ) throws Exception {
         ArgCheck.isNotEmpty(displayName, "displayName"); //$NON-NLS-1$
-        ArgCheck.isNotEmpty(jndiName, "jndiName"); //$NON-NLS-1$
+        ArgCheck.isNotEmpty(dsName, "dsName"); //$NON-NLS-1$
         ArgCheck.isNotEmpty(typeName, "typeName"); //$NON-NLS-1$
         ArgCheck.isNotEmpty(properties, "properties"); //$NON-NLS-1$
 
         // Check if exists, return false
-        if (dataSourceExists(jndiName)) {
-            ITeiidDataSource tds = this.dataSourceByNameMap.get(jndiName);
+        if (dataSourceExists(dsName)) {
+            ITeiidDataSource tds = this.dataSourceByNameMap.get(dsName);
             if (tds != null) {
                 return tds;
             }
@@ -321,23 +321,23 @@ public class ExecutionAdmin implements IExecutionAdmin {
             }
         }
 
-        this.admin.createDataSource(jndiName, typeName, properties);
+        this.admin.createDataSource(dsName, typeName, properties);
 
         refreshDataSourceNames();
 
-        // Check that local name list contains new jndiName
-        if (dataSourceExists(jndiName)) {
+        // Check that local name list contains new dsName
+        if (dataSourceExists(dsName)) {
             String nullStr = null;
-            ITeiidDataSource tds = new TeiidDataSource(nullStr, jndiName, typeName, properties);
+            ITeiidDataSource tds = new TeiidDataSource(nullStr, dsName, typeName, properties);
 
-            this.dataSourceByNameMap.put(jndiName, tds);
+            this.dataSourceByNameMap.put(dsName, tds);
             this.eventManager.notifyListeners(ExecutionConfigurationEvent.createAddDataSourceEvent(tds));
 
             return tds;
         }
 
         // We shouldn't get here if data source was created
-        throw new Exception(NLS.bind(Messages.errorCreatingDataSource, jndiName, typeName));
+        throw new Exception(NLS.bind(Messages.errorCreatingDataSource, dsName, typeName));
     }
 
     /*
@@ -626,6 +626,12 @@ public class ExecutionAdmin implements IExecutionAdmin {
         this.dataSourceByNameMap.clear();
         Collection<ITeiidDataSource> tdsList = connectionMatcher.findTeiidDataSources(this.dataSourceNames);
         for (ITeiidDataSource ds : tdsList) {
+        	// Get Properties for the source
+        	Properties dsProps = this.admin.getDataSource(ds.getName());
+        	// Transfer properties to the ITeiidDataSource
+        	ds.getProperties().clear();
+        	ds.getProperties().putAll(dsProps);
+        	// put ds into map
             this.dataSourceByNameMap.put(ds.getName(), ds);
         }
 
