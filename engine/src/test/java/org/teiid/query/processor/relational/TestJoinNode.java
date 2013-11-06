@@ -35,6 +35,7 @@ import org.junit.Test;
 import org.teiid.common.buffer.BlockedException;
 import org.teiid.common.buffer.BufferManagerFactory;
 import org.teiid.common.buffer.TupleBatch;
+import org.teiid.common.buffer.TupleBuffer;
 import org.teiid.common.buffer.impl.BufferManagerImpl;
 import org.teiid.core.TeiidComponentException;
 import org.teiid.core.TeiidProcessingException;
@@ -179,7 +180,18 @@ public class TestJoinNode {
         
         List rightElements = new ArrayList();
         rightElements.add(es2);
-        rightNode = new FakeRelationalNode(2, rightTuples);
+        rightNode = new BlockingFakeRelationalNode(2, rightTuples) {
+        	@Override
+        	public boolean hasBuffer(boolean requireFinal) {
+        		return false;
+        	}
+
+        	@Override
+        	public TupleBuffer getBuffer(int maxRows) throws BlockedException, TeiidComponentException, TeiidProcessingException {
+        		fail();
+        		throw new AssertionError();
+        	};
+        };
         rightNode.setElements(rightElements);
         
         List joinElements = new ArrayList();
@@ -620,11 +632,11 @@ public class TestJoinNode {
         ElementSymbol es2 = new ElementSymbol("e2"); //$NON-NLS-1$
         es2.setType(DataTypeManager.DefaultDataClasses.INTEGER);
         ElementSymbol es3 = new ElementSymbol("e3"); //$NON-NLS-1$
-        es1.setType(DataTypeManager.DefaultDataClasses.INTEGER);
+        es3.setType(DataTypeManager.DefaultDataClasses.INTEGER);
         ElementSymbol es4 = new ElementSymbol("e4"); //$NON-NLS-1$
-        es2.setType(DataTypeManager.DefaultDataClasses.INTEGER);
+        es4.setType(DataTypeManager.DefaultDataClasses.INTEGER);
         ElementSymbol es5 = new ElementSymbol("e5"); //$NON-NLS-1$
-        es2.setType(DataTypeManager.DefaultDataClasses.INTEGER);
+        es5.setType(DataTypeManager.DefaultDataClasses.INTEGER);
         
         leftNode = new BlockingFakeRelationalNode(1, leftTuples);
         leftNode.setElements(Arrays.asList(es1, es2));
@@ -772,6 +784,10 @@ public class TestJoinNode {
     	helpTestEnhancedSortMergeJoin(10);
     }
     
+    @Test public void testMergeJoinOptimizationMultiBatch1() throws Exception {
+    	helpTestEnhancedSortMergeJoin(1);
+    }
+    
     @Test public void testMergeJoinOptimizationNoRows() throws Exception {
         this.joinType = JoinType.JOIN_INNER;
         this.leftTuples = createTuples1();
@@ -876,7 +892,7 @@ public class TestJoinNode {
         };
         helpCreateJoin();               
         this.joinStrategy = new MergeJoinStrategy(SortOption.SORT, SortOption.ALREADY_SORTED, false);
-        FakeRelationalNode newNode = new FakeRelationalNode(2, rightTuples) {
+        FakeRelationalNode newNode = new BlockingFakeRelationalNode(2, rightTuples) {
         	@Override
         	public TupleBatch nextBatchDirect() throws BlockedException,
         			TeiidComponentException, TeiidProcessingException {
@@ -945,5 +961,5 @@ public class TestJoinNode {
         this.join.setJoinStrategy(joinStrategy);
         helpTestJoinDirect(expected, 4, 1000);
     }
-
+    
 }

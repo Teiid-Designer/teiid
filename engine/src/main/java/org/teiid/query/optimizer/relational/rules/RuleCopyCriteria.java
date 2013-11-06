@@ -96,9 +96,10 @@ public final class RuleCopyCriteria implements OptimizerRule {
             return plan;
         }
         
-        if (tryToCopy(plan, new Set[2], metadata)) {
+        if (tryToCopy(plan, new Set[2], metadata, false)) {
             //Push any newly created criteria nodes and try to copy them afterwards
             rules.push(RuleConstants.COPY_CRITERIA);
+            rules.push(RuleConstants.RAISE_ACCESS);
             rules.push(RuleConstants.PUSH_NON_JOIN_CRITERIA);
         }
         
@@ -127,7 +128,8 @@ public final class RuleCopyCriteria implements OptimizerRule {
                                  List<Criteria> joinCriteria,
                                  Set<Criteria> combinedCriteria,
                                  boolean checkForGroupReduction,
-                                 QueryMetadataInterface metadata) {
+                                 QueryMetadataInterface metadata,
+                                 boolean underAccess) {
         int startGroups = GroupsUsedByElementsVisitor.getGroups(crit).size();
         
         Criteria tgtCrit = (Criteria) crit.clone();
@@ -153,9 +155,32 @@ public final class RuleCopyCriteria implements OptimizerRule {
             return false;
         }
         
+        boolean isNew = combinedCriteria.add(tgtCrit);
+        
+        if (underAccess) {
+        	boolean use = false;
+        	if (isNew && !checkForGroupReduction) {
+        		if (endGroups == 1) {
+        			use = true;
+        		} else if (tgtCrit instanceof CompareCriteria) {
+	        		CompareCriteria cc = (CompareCriteria)tgtCrit;
+	        		int leftGroups = GroupsUsedByElementsVisitor.getGroups(cc.getLeftExpression()).size();
+	        		if (leftGroups == endGroups || leftGroups == 0) {
+	        			use = true;
+	        		}
+	        	}
+        	}
+        	if (!use) {
+        		return false;
+        	}
+        }
+        
         //if this is unique or it a duplicate but reduced a current join conjunct, return true
-        if (combinedCriteria.add(tgtCrit)) {
+        if (isNew) {
             joinCriteria.add(tgtCrit);
+            if (tgtCrit instanceof CompareCriteria) {
+            	((CompareCriteria)tgtCrit).setOptional(true);
+            }
             return true;
         } else if (checkForGroupReduction) {
             return true;
@@ -172,7 +197,7 @@ public final class RuleCopyCriteria implements OptimizerRule {
      * @param node
      * @return true if criteria has been created
      */
-    private boolean tryToCopy(PlanNode node, Set<Criteria>[] criteriaInfo, QueryMetadataInterface metadata) {
+    private boolean tryToCopy(PlanNode node, Set<Criteria>[] criteriaInfo, QueryMetadataInterface metadata, boolean underAccess) {
         boolean changedTree = false;
         
         if (node == null) {
@@ -184,14 +209,14 @@ public final class RuleCopyCriteria implements OptimizerRule {
             JoinType jt = (JoinType)node.getProperty(NodeConstants.Info.JOIN_TYPE);
             
             if (jt == JoinType.JOIN_FULL_OUTER) {
-                return visitChildern(node, criteriaInfo, changedTree, metadata);
+                return visitChildern(node, criteriaInfo, changedTree, metadata, underAccess);
             }
             
             Set<Criteria>[] leftChildCriteria = new Set[2];
             Set<Criteria>[] rightChildCriteria = new Set[2];
             
-            changedTree |= tryToCopy(node.getFirstChild(), leftChildCriteria, metadata);
-            changedTree |= tryToCopy(node.getLastChild(), rightChildCriteria, metadata);
+            changedTree |= tryToCopy(node.getFirstChild(), leftChildCriteria, metadata, underAccess);
+            changedTree |= tryToCopy(node.getLastChild(), rightChildCriteria, metadata, underAccess);
 
             List<Criteria> joinCrits = (List<Criteria>) node.getProperty(NodeConstants.Info.JOIN_CRITERIA);
             Set<Criteria> combinedCriteria = null;
@@ -227,11 +252,11 @@ public final class RuleCopyCriteria implements OptimizerRule {
 
                 if (!toCopy.isEmpty()) {
                     
-                    changedTree |= createCriteria(false, toCopy, combinedCriteria, srcToTgt, newJoinCrits, metadata);
+                    changedTree |= createCriteria(false, toCopy, combinedCriteria, srcToTgt, newJoinCrits, metadata, underAccess);
                     
                     srcToTgt = buildElementMap(allCriteria, null, null, metadata);
                                 
-                    changedTree |= createCriteria(true, joinCrits, combinedCriteria, srcToTgt, newJoinCrits, metadata);
+                    changedTree |= createCriteria(true, joinCrits, combinedCriteria, srcToTgt, newJoinCrits, metadata, underAccess);
                 }
                 
                 joinCrits.addAll(newJoinCrits);
@@ -254,7 +279,7 @@ public final class RuleCopyCriteria implements OptimizerRule {
             return changedTree;
         }
         
-        changedTree = visitChildern(node, criteriaInfo, changedTree, metadata);
+        changedTree = visitChildern(node, criteriaInfo, changedTree, metadata, underAccess);
 
         //visit select nodes on the way back up
         switch (node.getType()) {
@@ -292,7 +317,7 @@ public final class RuleCopyCriteria implements OptimizerRule {
                                                    Set<Criteria> combinedCriteria,
                                                    Map<Expression, Expression> srcToTgt,
                                                    List<Criteria> newJoinCrits,
-                                                   QueryMetadataInterface metadata) {
+                                                   QueryMetadataInterface metadata, boolean underAccess) {
         boolean changedTree = false;
     	if (srcToTgt.size() == 0) {
             return changedTree;
@@ -301,21 +326,15 @@ public final class RuleCopyCriteria implements OptimizerRule {
         while (i.hasNext()) {
             Criteria crit = i.next();
             
-            if (copyCriteria(crit, srcToTgt, newJoinCrits, combinedCriteria, copyingJoinCriteria, metadata)) {
+            if (copyCriteria(crit, srcToTgt, newJoinCrits, combinedCriteria, copyingJoinCriteria, metadata, underAccess)) {
             	changedTree = true;
-            	if (!copyingJoinCriteria) {
-            		crit = newJoinCrits.get(newJoinCrits.size() - 1);
-            	}
-            	//TODO more criteria can be "optional"
-            	if (crit instanceof CompareCriteria) {
-            		CompareCriteria cc = (CompareCriteria)crit;
-            		//if (cc.getLeftExpression() instanceof ElementSymbol && cc.getRightExpression() instanceof ElementSymbol) {
-            			//don't remove theta criteria, just mark it as optional
-        				cc.setOptional(copyingJoinCriteria?null:true);
-            			continue;
-            		//}
-            	}
             	if (copyingJoinCriteria) {
+            		if (crit instanceof CompareCriteria) {
+            			CompareCriteria cc = (CompareCriteria)crit;
+            			//don't remove theta criteria, just mark it as optional
+        				cc.setOptional(null);
+            			continue;
+            		}
             		i.remove();
             	}
             }
@@ -342,12 +361,13 @@ public final class RuleCopyCriteria implements OptimizerRule {
     private boolean visitChildern(PlanNode node,
                                   Set<Criteria>[] criteriaInfo,
                                   boolean changedTree,
-                                  QueryMetadataInterface metadata) {
+                                  QueryMetadataInterface metadata, boolean underAccess) {
         if (node.getChildCount() > 0) {
+        	underAccess |= node.getType() == NodeConstants.Types.ACCESS;
             List<PlanNode> children = node.getChildren();
             for (int i = 0; i < children.size(); i++) {
                 PlanNode childNode = children.get(i);
-                changedTree |= tryToCopy(childNode, i==0?criteriaInfo:new Set[2], metadata);
+                changedTree |= tryToCopy(childNode, i==0?criteriaInfo:new Set[2], metadata, underAccess);
             }
         }
         return changedTree;
@@ -424,7 +444,7 @@ public final class RuleCopyCriteria implements OptimizerRule {
 		}
 		if (!GroupsUsedByElementsVisitor.getGroups(crit.getLeftExpression()).isEmpty() && !GroupsUsedByElementsVisitor.getGroups(crit.getRightExpression()).isEmpty()
 				&& (GroupsUsedByElementsVisitor.getGroups(left).isEmpty() || GroupsUsedByElementsVisitor.getGroups(oldValue).isEmpty())) {
-			crit.setOptional(true); //the original has been simplified
+			crit.setOptional(null); //the original has been simplified
 		}
 		return false;
 	}

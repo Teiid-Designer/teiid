@@ -873,6 +873,49 @@ public class TestProcedureProcessor {
         helpTestProcess(plan, expected, dataMgr, metadata);
     }
     
+    @Test public void testMultipleReturnable() throws Exception {
+        TransformationMetadata metadata = RealMetadataFactory.example1();
+        
+        addProc(metadata, "sq2", "CREATE VIRTUAL PROCEDURE BEGIN\n" //$NON-NLS-1$ //$NON-NLS-2$
+				        + "SELECT e1, e2 FROM pm1.g1; select e1, e2 from pm1.g2; END", new String[] { "e1", "e2" }
+        , new String[] { DataTypeManager.DefaultDataTypes.STRING, DataTypeManager.DefaultDataTypes.INTEGER }, new String[] {"in"}, new String[] {DataTypeManager.DefaultDataTypes.STRING});
+
+        String userUpdateStr = "EXEC pm1.sq2('First')"; //$NON-NLS-1$
+        
+        HardcodedDataManager dataMgr = new HardcodedDataManager();
+        dataMgr.addData("SELECT pm1.g1.e1, pm1.g1.e2 FROM pm1.g1", new List<?>[0]);
+        dataMgr.addData("SELECT pm1.g2.e1, pm1.g2.e2 FROM pm1.g2", new List<?>[] {Arrays.asList("a", 1)});
+
+        ProcessorPlan plan = getProcedurePlan(userUpdateStr, metadata);
+                
+        List[] expected = new List<?>[] {Arrays.asList("a", 1)};
+        helpTestProcess(plan, expected, dataMgr, metadata);
+        assertEquals(6, dataMgr.getCommandHistory().size());
+    }
+    
+    /**
+     * Should return the first results
+     */
+    @Test public void testReturnable1() throws Exception {
+        TransformationMetadata metadata = RealMetadataFactory.example1();
+        
+        addProc(metadata, "sq2", "CREATE VIRTUAL PROCEDURE BEGIN\n" //$NON-NLS-1$ //$NON-NLS-2$
+				        + "SELECT e1, e2 FROM pm1.g1; select e1, e2 from pm1.g2 without return; END", new String[] { "e1", "e2" }
+        , new String[] { DataTypeManager.DefaultDataTypes.STRING, DataTypeManager.DefaultDataTypes.INTEGER }, new String[] {"in"}, new String[] {DataTypeManager.DefaultDataTypes.STRING});
+
+        String userUpdateStr = "EXEC pm1.sq2('First')"; //$NON-NLS-1$
+        
+        HardcodedDataManager dataMgr = new HardcodedDataManager();
+        dataMgr.addData("SELECT pm1.g1.e1, pm1.g1.e2 FROM pm1.g1", new List<?>[0]);
+        dataMgr.addData("SELECT pm1.g2.e1, pm1.g2.e2 FROM pm1.g2", new List<?>[] {Arrays.asList("a", 1)});
+
+        ProcessorPlan plan = getProcedurePlan(userUpdateStr, metadata);
+                
+        List[] expected = new List<?>[0];
+        helpTestProcess(plan, expected, dataMgr, metadata);
+        assertEquals(6, dataMgr.getCommandHistory().size());
+    }
+    
     @Test public void testDynamicCommandWithUsing() throws Exception {
         TransformationMetadata metadata = RealMetadataFactory.example1();
         
@@ -2083,7 +2126,49 @@ public class TestProcedureProcessor {
         helpTestProcess(plan, expected, dataManager, tm);
 
     }
+    
+    @Test 
+    public void testDynamicCommandWithIntoExpressionInNestedBlock() throws Exception {
+		TransformationMetadata metadata = RealMetadataFactory.example1();
+		String query = "CREATE VIRTUAL PROCEDURE \n"
+				+ "BEGIN\n"
+				+ "EXECUTE IMMEDIATE 'SELECT e1 FROM pm1.g1 WHERE e1 = ''First''' as x string into #temp;\n"
+				+ "declare string VARIABLES.RESULT = select x from #temp;\n"
+				+ "IF (VARIABLES.RESULT = 'First')\n"
+				+ "  BEGIN ATOMIC\n"
+				+ "  EXECUTE IMMEDIATE 'SELECT e1 FROM pm1.g1' AS x string;"
+				+ "  EXECUTE IMMEDIATE 'SELECT e1 FROM pm1.g1 WHERE e1 = ''Second''' as x string into #temp2 WITHOUT RETURN;\n"
+				+ "  VARIABLES.RESULT = select x from #temp2;\n" + "  END"
+				+ " select VARIABLES.RESULT;" + "END";
 
+		addProc(metadata, query);
+
+		String userUpdateStr = "EXEC pm1.sq2()"; //$NON-NLS-1$
+
+		FakeDataManager dataMgr = exampleDataManager(metadata);
+
+		ProcessorPlan plan = getProcedurePlan(userUpdateStr, metadata);
+
+		// Create expected results
+		List[] expected = new List[] { Arrays.asList(new Object[] { "Second" }), //$NON-NLS-1$
+		};
+		helpTestProcess(plan, expected, dataMgr, metadata);
+    }
+    
+    @Test public void testResultSetAtomic() throws Exception {
+    	String ddl = 
+    			"create virtual procedure proc2 (x integer) returns table(y integer) as begin select 1; begin atomic select 2; end end;";
+    	TransformationMetadata tm = TestProcedureResolving.createMetadata(ddl);    	
+    
+    	String sql = "call proc2(0)"; //$NON-NLS-1$
+
+        ProcessorPlan plan = getProcedurePlan(sql, tm);
+
+        HardcodedDataManager dataManager = new HardcodedDataManager(tm);
+        
+    	helpTestProcess(plan, new List[] {Arrays.asList(2)}, dataManager, tm);
+    }
+    
     private static final boolean DEBUG = false;
     
 }

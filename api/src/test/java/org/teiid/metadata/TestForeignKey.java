@@ -20,28 +20,26 @@
  * 02110-1301 USA.
  */
 
-package org.teiid.net.socket;
+package org.teiid.metadata;
 
-import static org.junit.Assert.*;
-
-import java.io.FileInputStream;
-import java.io.ObjectInputStream;
+import static org.junit.Assert.assertEquals;
 
 import org.junit.Test;
-import org.teiid.core.util.UnitTestUtil;
+import org.mockito.Mockito;
 
-@SuppressWarnings("nls")
-public class TestHandshake {
-
-	@Test public void testCompatibility() throws Exception {
-		ObjectInputStream ois = new ObjectInputStream(new FileInputStream(UnitTestUtil.getTestDataFile("handshake.ser")));
-		Handshake hs = (Handshake)ois.readObject();
-		assertEquals(AuthenticationType.CLEARTEXT, hs.getAuthType());
-	}
+public class TestForeignKey {
 	
-	@Test public void testVersionNormalization() throws Exception {
-		Handshake hs = new Handshake("11.2.3.a");
-		assertEquals("11.02.03.a", hs.getVersion());
+	@Test
+	public void testReferenceTableName() {
+		Table table = Mockito.mock(Table.class);
+		Mockito.stub(table.getName()).toReturn("table"); //$NON-NLS-1$
+		
+		KeyRecord pk = Mockito.mock(KeyRecord.class);
+		Mockito.stub(pk.getParent()).toReturn(table);
+		
+		ForeignKey fk = new ForeignKey();
+		fk.setPrimaryKey(pk);
+		
+		assertEquals("table", fk.getReferenceTableName()); //$NON-NLS-1$
 	}
-	
 }

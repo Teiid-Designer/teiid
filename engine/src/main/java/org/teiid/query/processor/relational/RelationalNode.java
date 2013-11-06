@@ -287,6 +287,7 @@ public abstract class RelationalNode implements Cloneable, BatchProducer {
                         }
                     }
                     this.recordBatch(batch);
+                    recordStats = false;
                 }
                 //24663: only return non-zero batches. 
                 //there have been several instances in the code that have not correctly accounted for non-terminal zero length batches
@@ -602,7 +603,7 @@ public abstract class RelationalNode implements Cloneable, BatchProducer {
 		return processingState;
 	}
 	
-	public boolean hasFinalBuffer() {
+	public boolean hasBuffer(boolean requireFinal) {
 		return false;
 	}
 	
@@ -613,7 +614,7 @@ public abstract class RelationalNode implements Cloneable, BatchProducer {
 	 * @throws TeiidComponentException 
 	 * @throws BlockedException 
      */
-	public TupleBuffer getFinalBuffer(int maxRows) throws BlockedException, TeiidComponentException, TeiidProcessingException {
+	public TupleBuffer getBuffer(int maxRows) throws BlockedException, TeiidComponentException, TeiidProcessingException {
 		return null;
 	}
 	

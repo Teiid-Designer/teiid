@@ -46,6 +46,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import org.teiid.client.BatchSerializer;
 import org.teiid.client.ResizingArrayList;
+import org.teiid.client.util.ExceptionUtil;
 import org.teiid.common.buffer.*;
 import org.teiid.common.buffer.AutoCleanupUtil.Removable;
 import org.teiid.common.buffer.LobManager.ReferenceMode;
@@ -54,6 +55,7 @@ import org.teiid.core.TeiidRuntimeException;
 import org.teiid.core.types.DataTypeManager;
 import org.teiid.core.types.DataTypeManager.WeakReferenceHashedValueCache;
 import org.teiid.core.types.Streamable;
+import org.teiid.core.util.Assertion;
 import org.teiid.dqp.internal.process.DQPConfiguration;
 import org.teiid.dqp.internal.process.RequestWorkItem;
 import org.teiid.logging.LogConstants;
@@ -85,7 +87,7 @@ public class BufferManagerImpl implements BufferManager, ReplicatedObject<String
 	 * Asynch cleaner attempts to age out old entries and to reduce the memory size when 
 	 * little is reserved.
 	 */
-	private static final int MAX_READ_AGE = 1<<18;
+	private static final int MAX_READ_AGE = 1<<17;
 	private static final class Cleaner extends TimerTask {
 		WeakReference<BufferManagerImpl> bufferRef;
 		
@@ -103,7 +105,7 @@ public class BufferManagerImpl implements BufferManager, ReplicatedObject<String
 				}
 				impl.cleaning.set(true);
 				try {
-					long evicted = impl.doEvictions(0, false, impl.initialEvictionQueue);
+					long evicted = impl.doEvictions(impl.maxProcessingBytes, false, impl.initialEvictionQueue);
 					if (evicted != 0) {
 						if (LogManager.isMessageToBeRecorded(LogConstants.CTX_BUFFER_MGR, MessageLevel.TRACE)) {
 							LogManager.logTrace(LogConstants.CTX_BUFFER_MGR, "Asynch eviction run", evicted, impl.reserveBatchBytes.get(), impl.maxReserveBytes, impl.activeBatchBytes.get()); //$NON-NLS-1$
@@ -229,7 +231,7 @@ public class BufferManagerImpl implements BufferManager, ReplicatedObject<String
 			}
 			overheadBytes.addAndGet(BATCH_OVERHEAD);
 			if (LogManager.isMessageToBeRecorded(LogConstants.CTX_BUFFER_MGR, MessageLevel.TRACE)) {
-				LogManager.logTrace(LogConstants.CTX_BUFFER_MGR, "Add batch to BufferManager", ce.getId(), "with size estimate", ce.getSizeEstimate()); //$NON-NLS-1$ //$NON-NLS-2$
+				LogManager.logTrace(LogConstants.CTX_BUFFER_MGR, "Add batch to BufferManager", this.id, ce.getId(), "with size estimate", ce.getSizeEstimate()); //$NON-NLS-1$ //$NON-NLS-2$
 			}
 			addMemoryEntry(ce, true);
 			return oid;
@@ -254,7 +256,6 @@ public class BufferManagerImpl implements BufferManager, ReplicatedObject<String
 		@Override
 		public void serialize(List<? extends List<?>> obj,
 				ObjectOutput oos) throws IOException {
-			int expectedModCount = 0;
 			ResizingArrayList<?> list = null;
 			if (obj instanceof ResizingArrayList<?>) {
 				list = (ResizingArrayList<?>)obj;
@@ -263,11 +264,15 @@ public class BufferManagerImpl implements BufferManager, ReplicatedObject<String
 				//it's expected that the containing structure has updated the lob manager
 				BatchSerializer.writeBatch(oos, types, obj);
 			} catch (RuntimeException e) {
-				//there is a chance of a concurrent persist while modifying 
-				//in which case we want to swallow this exception
-				if (list == null || list.getModCount() == expectedModCount) {
+				if (ExceptionUtil.getExceptionOfType(e, ClassCastException.class) != null) {
 					throw e;
 				}
+				//there is a chance of a concurrent persist while modifying 
+				//in which case we want to swallow this exception
+				if (list == null) {
+					throw e;
+				}
+				LogManager.logDetail(LogConstants.CTX_BUFFER_MGR, e, "Possible Concurrent Modification", id); //$NON-NLS-1$
 			}
 		}
 		
@@ -525,7 +530,9 @@ public class BufferManagerImpl implements BufferManager, ReplicatedObject<String
 		Class<?>[] types = new Class[elements.size()];
         for (ListIterator<? extends Expression> i = elements.listIterator(); i.hasNext();) {
             Expression expr = i.next();
-            types[i.previousIndex()] = expr.getType();
+            Class<?> type = expr.getType();
+            Assertion.isNotNull(type);
+			types[i.previousIndex()] = type;
         }
 		return types;
 	}
@@ -835,22 +842,25 @@ public class BufferManagerImpl implements BufferManager, ReplicatedObject<String
 		long freed = 0;
 		while (freed <= maxToFree && (
 				!checkActiveBatch //age out 
-				|| queue == evictionQueue && activeBatchBytes.get() + overheadBytes.get() + this.maxReserveBytes/2 > reserveBatchBytes.get() //nominal cleaning criterion 
-				|| queue != evictionQueue && activeBatchBytes.get() > 0)) { //assume that basically all initial batches will need to be written out at some point
+				|| (queue == evictionQueue && activeBatchBytes.get() + overheadBytes.get() + this.maxReserveBytes/2 > reserveBatchBytes.get()) //nominal cleaning criterion 
+				|| (queue != evictionQueue && activeBatchBytes.get() + overheadBytes.get() + 3*this.maxReserveBytes/4 > reserveBatchBytes.get()))) { //assume that basically all initial batches will need to be written out at some point
 			CacheEntry ce = queue.firstEntry(checkActiveBatch);
 			if (ce == null) {
 				break;
 			}
 			synchronized (ce) {
 				if (!memoryEntries.containsKey(ce.getId())) {
-					checkActiveBatch = true;
+					if (!checkActiveBatch) {
+						queue.remove(ce);
+					}
 					continue; //not currently a valid eviction
 				}
 			}
 			if (!checkActiveBatch) {
 				long lastAccess = ce.getKey().getLastAccess();
 				long currentTime = readAttempts.get();
-				if (currentTime - lastAccess < MAX_READ_AGE) {
+				long age = currentTime - lastAccess;
+				if (age < MAX_READ_AGE) {
 					checkActiveBatch = true;
 					continue;
 				}
@@ -863,12 +873,9 @@ public class BufferManagerImpl implements BufferManager, ReplicatedObject<String
 			} finally {
 				synchronized (ce) {
 					if (evicted && memoryEntries.remove(ce.getId()) != null) {
-						if (maxToFree > 0) {
-							freed += ce.getSizeEstimate();
-						}
+						freed += ce.getSizeEstimate();
 						activeBatchBytes.addAndGet(-ce.getSizeEstimate());
 						queue.remove(ce); //ensures that an intervening get will still be cleaned
-						checkActiveBatch = true;
 					}
 				}
 			}
@@ -891,7 +898,7 @@ public class BufferManagerImpl implements BufferManager, ReplicatedObject<String
 		if (persist) {
 			long count = writeCount.incrementAndGet();
 			if (LogManager.isMessageToBeRecorded(LogConstants.CTX_BUFFER_MGR, MessageLevel.DETAIL)) {
-				LogManager.logDetail(LogConstants.CTX_BUFFER_MGR, ce.getId(), "writing batch to storage, total writes: ", count); //$NON-NLS-1$
+				LogManager.logDetail(LogConstants.CTX_BUFFER_MGR, s.getId(), ce.getId(), "writing batch to storage, total writes: ", count); //$NON-NLS-1$
 			}
 		}
 		boolean result = cache.add(ce, s);
@@ -977,7 +984,7 @@ public class BufferManagerImpl implements BufferManager, ReplicatedObject<String
 	
 	CacheEntry remove(Long gid, Long batch, boolean prefersMemory) {
 		if (LogManager.isMessageToBeRecorded(LogConstants.CTX_BUFFER_MGR, MessageLevel.TRACE)) {
-			LogManager.logTrace(LogConstants.CTX_BUFFER_MGR, "Removing batch from BufferManager", batch); //$NON-NLS-1$
+			LogManager.logTrace(LogConstants.CTX_BUFFER_MGR, "Removing batch from BufferManager", gid, batch); //$NON-NLS-1$
 		}
 		cleanSoftReferences();
 		CacheEntry ce = fastGet(batch, prefersMemory, false);

@@ -379,15 +379,18 @@ public class Evaluator {
              throw new ExpressionEvaluationException(QueryPlugin.Event.TEIID30323, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30323, criteria));
 		}
 
-		// Shortcut if null
-		if(leftValue == null) {
-            return null;
-        }
         Boolean result = Boolean.FALSE;
 
         ValueIterator valueIter = null;
         if (criteria instanceof SetCriteria) {
         	SetCriteria set = (SetCriteria)criteria;
+    		// Shortcut if null
+    		if(leftValue == null) {
+    			if (!set.getValues().isEmpty()) {
+    				return null;
+    			}
+    			return criteria.isNegated();
+        	}
         	if (set.isAllConstants()) {
         		boolean exists = set.getValues().contains(new Constant(leftValue, criteria.getExpression().getType()));
         		if (!exists) {
@@ -403,6 +406,9 @@ public class Evaluator {
         	DependentSetCriteria ref = (DependentSetCriteria)criteria;
         	VariableContext vc = getContext(criteria).getVariableContext();
     		ValueIteratorSource vis = (ValueIteratorSource)vc.getGlobalValue(ref.getContextSymbol());
+    		if(leftValue == null) {
+    			return null;
+        	}
     		Set<Object> values;
     		try {
     			values = vis.getCachedSet(ref.getValueExpression());
@@ -426,6 +432,9 @@ public class Evaluator {
         	throw new AssertionError("unknown set criteria type"); //$NON-NLS-1$
         }
         while(valueIter.hasNext()) {
+        	if(leftValue == null) {
+    			return null;
+        	}
             Object possibleValue = valueIter.next();
             Object value = null;
             if(possibleValue instanceof Expression) {
@@ -479,11 +488,6 @@ public class Evaluator {
              throw new ExpressionEvaluationException(QueryPlugin.Event.TEIID30323, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30323, criteria));
         }
 
-        // Shortcut if null
-        if(leftValue == null) {
-            return null;
-        }
-
         // Need to be careful to initialize this variable carefully for the case
         // where valueIterator has no values, and the block below is not entered.
         // If there are no rows, and ALL is the predicate quantifier, the result
@@ -502,6 +506,11 @@ public class Evaluator {
 		}
         while(valueIter.hasNext()) {
             Object value = valueIter.next();
+            
+            // Shortcut if null
+            if(leftValue == null) {
+                return null;
+            }
 
             if(value != null) {
             	result = compare(criteria, leftValue, value);
@@ -874,7 +883,7 @@ public class Evaluator {
 		Evaluator.NameValuePair<Object>[] nameValuePairs = getNameValuePairs(tuple, args, true, true);
 		
 		try {
-			return TextLine.evaluate(Arrays.asList(nameValuePairs), defaultExtractor, function);
+			return new ArrayImpl(TextLine.evaluate(Arrays.asList(nameValuePairs), defaultExtractor, function));
 		} catch (TransformationException e) {
 			 throw new ExpressionEvaluationException(e);
 		}

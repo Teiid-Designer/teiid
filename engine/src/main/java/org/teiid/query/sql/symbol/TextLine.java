@@ -99,7 +99,7 @@ public class TextLine implements Expression, ITextLine<LanguageVisitor> {
 	
 	@Override
 	public Class<?> getType() {
-		return DataTypeManager.DefaultDataClasses.STRING;
+		return String[].class;
 	}
 
 	@Override
@@ -148,11 +148,12 @@ public class TextLine implements Expression, ITextLine<LanguageVisitor> {
 		Object getValue(T t);
 	}
 	
-	public static <T> List<Object> evaluate(final List<T> values, ValueExtractor<T> valueExtractor, TextLine textLine) throws TransformationException {
+	public static <T> String[] evaluate(final List<T> values, ValueExtractor<T> valueExtractor, TextLine textLine) throws TransformationException {
 		Character delimeter = textLine.getDelimiter();
 		if (delimeter == null) {
 			delimeter = Character.valueOf(',');
 		}
+		String delim = String.valueOf(delimeter.charValue());
 		Character quote = textLine.getQuote();
 		String quoteStr = null;		
 		if (quote == null) {
@@ -161,7 +162,7 @@ public class TextLine implements Expression, ITextLine<LanguageVisitor> {
 			quoteStr = String.valueOf(quote);
 		}
 		String doubleQuote = quoteStr + quoteStr;
-		ArrayList<Object> result = new ArrayList<Object>();
+		ArrayList<String> result = new ArrayList<String>();
 		for (Iterator<T> iterator = values.iterator(); iterator.hasNext();) {
 			T t = iterator.next();
 			String text = DataTypeManager.transformValue(valueExtractor.getValue(t), DataTypeManager.DefaultDataClasses.STRING);
@@ -172,11 +173,11 @@ public class TextLine implements Expression, ITextLine<LanguageVisitor> {
 			result.add(StringUtil.replaceAll(text, quoteStr, doubleQuote));
 			result.add(quoteStr);
 			if (iterator.hasNext()) {
-				result.add(delimeter);
+				result.add(delim);
 			}			
 		}
 		result.add(textLine.getLineEnding());
-		return result;
+		return result.toArray(new String[result.size()]);
 	}
 	
 }
