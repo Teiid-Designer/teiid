@@ -109,12 +109,20 @@ public class ProcedureService implements IProcedureService, ISQLConstants {
         if( metadataFileInfo.doIncludeQuote() ) {    
             if(! DEFAULT_QUOTE.equals(quote)) {
                 sb.append("QUOTE"); //$NON-NLS-1$
+                // single tic needs to be escaped with another in SQL
+                if(quote.equals("'")) { //$NON-NLS-1$
+                	quote="''"; //$NON-NLS-1$
+                }
                 sb.append(SPACE).append('\'').append(quote).append('\'');
             }
         } else if(metadataFileInfo.doIncludeEscape() ) {
             String escape = metadataFileInfo.getEscape();
             if(! DEFAULT_ESCAPE.equals(escape)) {
                 sb.append("ESCAPE"); //$NON-NLS-1$
+                // single tic needs to be escaped with another in SQL
+                if(escape.equals("'")) { //$NON-NLS-1$
+                	escape="''"; //$NON-NLS-1$
+                }
                 sb.append(SPACE).append('\'').append(escape).append('\'');
             }
         }
