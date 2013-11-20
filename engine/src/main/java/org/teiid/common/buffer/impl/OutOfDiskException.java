@@ -20,31 +20,16 @@
  * 02110-1301 USA.
  */
 
-package org.teiid.dqp.internal.datamgr;
+package org.teiid.common.buffer.impl;
 
-import org.teiid.common.buffer.BlockedException;
-import org.teiid.dqp.message.AtomicResultsMessage;
-import org.teiid.translator.CacheDirective;
-import org.teiid.translator.TranslatorException;
+import java.io.IOException;
 
-
-/**
- * Represents a connector execution in batched form.
- */
-public interface ConnectorWork {
-
-	void cancel();
-
-	AtomicResultsMessage more() throws TranslatorException, BlockedException;
-
-	void close();
-
-	void execute() throws TranslatorException, BlockedException;
+public class OutOfDiskException extends IOException {
 	
-	boolean isDataAvailable();
-	
-	CacheDirective getCacheDirective() throws TranslatorException;
+	private static final long serialVersionUID = -1332091322315668612L;
 
-	boolean isForkable();
-	
+	public OutOfDiskException(String message) {
+		super(message);
+	}
+
 }

@@ -164,6 +164,9 @@ class SourceState {
                 BatchIterator bi = new BatchIterator(this.source);
                 if (this.collector != null) {
                 	bi.setBuffer(this.collector.getTupleBuffer(), implicitBuffer == ImplicitBuffer.ON_MARK);
+                	if (implicitBuffer == ImplicitBuffer.NONE) {
+                		bi.getBuffer().setForwardOnly(true);
+                	}
                 	this.collector = null;
                 } else if (implicitBuffer != ImplicitBuffer.NONE) {
                 	bi.setBuffer(createSourceTupleBuffer(), implicitBuffer == ImplicitBuffer.ON_MARK);
@@ -200,7 +203,7 @@ class SourceState {
 	    	if (collector.getTupleBuffer().getManagedRowCount() >= limit) {
 	    		return;
 	    	}
-	        this.buffer = collector.collectTuples();
+	        this.buffer = collector.collectTuples(true);
     	}
     }
 
