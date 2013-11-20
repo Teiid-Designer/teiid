@@ -10,6 +10,31 @@
                minor="4"
                micro="x">
          </version>
+         <version
+               major="8"
+               minor="5"
+               micro="x">
+         </version>
+         <version
+               major="8"
+               minor="6"
+               micro="x">
+         </version>
+         <version
+               major="8"
+               minor="7"
+               micro="x">
+         </version>
+         <version
+               major="8"
+               minor="8"
+               micro="x">
+         </version>
+         <version
+               major="8"
+               minor="9"
+               micro="x">
+         </version>
       </runtimeFactory>
    </extension>
 
