@@ -134,14 +134,13 @@ public class DataTypeManagerService implements IDataTypeManagerService {
     public boolean isImplicitConversion(String srcType, String tgtType) {
         return DataTypeManager.isImplicitConversion(srcType, tgtType);
     }
-    
-    @Override
+
     public String getCanonicalString(String name) {
         return DataTypeManager.getCanonicalString(name);
     }
 
     @Override
-    public boolean canTransform(String sourceTypeName, String targetTypeName) {
+    public boolean isTransformable(String sourceTypeName, String targetTypeName) {
         return DataTypeManager.getTransform(sourceTypeName, targetTypeName) != null;
     }
     
