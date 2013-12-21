@@ -7,6 +7,8 @@
 */
 package org.teiid84.sql.proc.wsdl;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
 import org.teiid.designer.query.proc.wsdl.IWsdlAttributeInfo;
@@ -25,6 +27,9 @@ public class WsdlRequestProcedureHelper extends AbstractWsdlHelper implements IW
 
     private final IWsdlRequestInfo requestInfo;
     private final Properties properties;
+    private final static String NSSTRING = "nsString"; //$NON-NLS-1$
+    private final static String NS = "ns"; //$NON-NLS-1$
+    private final static String NSPREFIX = "prefix"; //$NON-NLS-1$
 
     /**
      * @param requestInfo
@@ -155,32 +160,37 @@ public class WsdlRequestProcedureHelper extends AbstractWsdlHelper implements IW
         return partElementNamespace;
     }
     
-    private String getNamespaceString(IPart[] parts) {
+    private Map<String, String> getNamespaceString(IPart[] parts) {
         
+    	Map<String, String> nsMap = new HashMap<String, String>();
+    	String ns = null;
+    	String nsPrefix = null;
+    	
         if( getWrapperProcedure().getNamespaceURI() == null ) {
-            return null;
+            return nsMap;
         }
-        
-        String ns = null;
         
         if (parts.length==1){
             ns = getPartElementNamespace(parts[0]);
         }
-        
+        if (ns==null) ns = getWrapperProcedure().getNamespaceURI();
         StringBuffer sb = new StringBuffer();
         
-        String prefix=requestInfo.getReverseNSMap().get(ns==null?getWrapperProcedure().getNamespaceURI():ns);
-    	if (isDefaultNS(prefix)) {
-    		 sb.append(DEFAULT).append(SPACE).append(S_QUOTE).append(ns==null?getWrapperProcedure().getNamespaceURI():ns).append(S_QUOTE);
+        nsPrefix=requestInfo.getReverseNSMap().get(ns);
+        nsMap.put(NS, ns);
+        nsMap.put(NSPREFIX, nsPrefix);
+    	if (isDefaultNS(nsPrefix)) {
+    		 sb.append(DEFAULT).append(SPACE).append(S_QUOTE).append(ns).append(S_QUOTE);
     	}else{
     		sb.append(XMLNAMESPACES).append(L_PAREN);
 			sb.append(SPACE).append(S_QUOTE).append(getWrapperProcedure().getNamespaceURI()).append(S_QUOTE).append(SPACE).append(AS).append(SPACE);
-            sb.append(prefix);
+            sb.append(nsPrefix);
 		}
         
     	sb.append(R_PAREN);
+    	nsMap.put(NSSTRING, sb.toString());
     	
-        return sb.toString();
+        return nsMap;
     }
     
     /**
@@ -234,6 +244,7 @@ public class WsdlRequestProcedureHelper extends AbstractWsdlHelper implements IW
         String elementName = null;
         IMessage message = null;
         IPart[] parts = null;
+       
             
         if (!(requestInfo.isMessageServiceMode())) {
             message = requestInfo.getOperation().getInputMessage();
@@ -242,9 +253,21 @@ public class WsdlRequestProcedureHelper extends AbstractWsdlHelper implements IW
             	elementName = getPartElementName(parts[0]);
             }
         }
+        
+        if (elementName == null){
+        	elementName = requestInfo.getOperation().getName();
+        }
             
-        sb.append(convertSqlNameSegment(elementName==null?requestInfo.getOperation().getName():elementName)).append(COMMA).append(SPACE);
-        String nsString = (!(requestInfo.isMessageServiceMode()) ? getNamespaceString(parts) : null);
+        Map<String, String> nsMap = (!(requestInfo.isMessageServiceMode()) ? getNamespaceString(parts) : null);
+        String nsString = nsMap.get(NSSTRING);
+        String nsPrefix = nsMap.get(NSPREFIX);
+        String ns = nsMap.get(NS);
+        if (nsPrefix!=null &! isDefaultNS(nsPrefix)){
+        	sb.append("\""+nsPrefix+":"+elementName+"\"").append(COMMA).append(SPACE); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }else{
+        	sb.append(convertSqlNameSegment(elementName)).append(COMMA).append(SPACE);
+        }
+        
         //If this is MESSAGE mode, no need to add NS since we did that at the Envelope level
         if (!(requestInfo.isMessageServiceMode())) {
             if( nsString != null && !nsString.isEmpty() ) {
