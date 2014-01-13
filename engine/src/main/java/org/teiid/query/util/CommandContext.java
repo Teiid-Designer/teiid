@@ -24,6 +24,7 @@ package org.teiid.query.util;
 
 import java.io.Serializable;
 import java.lang.ref.WeakReference;
+import java.sql.SQLException;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -40,6 +41,7 @@ import org.teiid.api.exception.query.QueryProcessingException;
 import org.teiid.common.buffer.BufferManager;
 import org.teiid.common.buffer.TupleSource;
 import org.teiid.core.TeiidComponentException;
+import org.teiid.core.TeiidException;
 import org.teiid.core.util.ArgCheck;
 import org.teiid.core.util.ExecutorUtils;
 import org.teiid.core.util.LRUCache;
@@ -53,16 +55,19 @@ import org.teiid.dqp.internal.process.TupleSourceCache;
 import org.teiid.dqp.message.RequestID;
 import org.teiid.dqp.service.TransactionContext;
 import org.teiid.dqp.service.TransactionService;
+import org.teiid.jdbc.ConnectionImpl;
+import org.teiid.jdbc.EmbeddedProfile;
+import org.teiid.jdbc.TeiidConnection;
+import org.teiid.jdbc.TeiidSQLException;
 import org.teiid.logging.LogConstants;
 import org.teiid.logging.LogManager;
 import org.teiid.metadata.FunctionMethod.Determinism;
+import org.teiid.net.ServerConnection;
 import org.teiid.query.QueryPlugin;
 import org.teiid.query.metadata.QueryMetadataInterface;
 import org.teiid.query.metadata.TempMetadataAdapter;
-import org.teiid.query.metadata.TempMetadataStore;
 import org.teiid.query.parser.ParseInfo;
 import org.teiid.query.processor.QueryProcessor;
-import org.teiid.query.sql.lang.SourceHint;
 import org.teiid.query.sql.symbol.ElementSymbol;
 import org.teiid.query.sql.symbol.Expression;
 import org.teiid.query.sql.util.VariableContext;
@@ -159,7 +164,6 @@ public class CommandContext implements Cloneable, org.teiid.CommandContext {
 		
 		private TransactionContext transactionContext;
 		private TransactionService transactionService;
-		private SourceHint sourceHint;
 		private Executor executor = ExecutorUtils.getDirectExecutor();
 		Map<Object, List<ReusableExecution<?>>> reusableExecutions;
 	    Set<CommandListener> commandListeners = null;
@@ -177,6 +181,7 @@ public class CommandContext implements Cloneable, org.teiid.CommandContext {
 		private AuthorizationValidator authorizationValidator;
 		
 		private Map<LookupKey, TupleSource> lookups;
+		private TempTableStore sessionTempTableStore;
 	}
 	
 	private GlobalState globalState = new GlobalState();
@@ -286,8 +291,9 @@ public class CommandContext implements Cloneable, org.teiid.CommandContext {
 		this.vdbState.vdbName = vdb.getName();
 		this.vdbState.vdbVersion = vdb.getVersion();
 		this.vdbState.dqpWorkContext = newWorkContext;
-		//we still have to wrap in a temp, but we don't need the session data
-		this.vdbState.metadata = new TempMetadataAdapter(vdb.getAttachment(QueryMetadataInterface.class), new TempMetadataStore());
+		TempMetadataAdapter metadata = new TempMetadataAdapter(vdb.getAttachment(QueryMetadataInterface.class), globalState.sessionTempTableStore.getMetadataStore());
+		metadata.setSession(true);
+		this.vdbState.metadata = metadata;
     }
     
     public String toString() {
@@ -433,6 +439,17 @@ public class CommandContext implements Cloneable, org.teiid.CommandContext {
 
 	public void setTempTableStore(TempTableStore tempTableStore) {
 		this.tempTableStore = tempTableStore;
+		if (globalState.sessionTempTableStore == null) {
+			globalState.sessionTempTableStore = tempTableStore;
+		}
+	} 
+	
+	public TempTableStore getSessionTempTableStore() {
+		return globalState.sessionTempTableStore;
+	}
+
+	public void setSessionTempTableStore(TempTableStore tempTableStore) {
+		this.globalState.sessionTempTableStore = tempTableStore;
 	}
 	
 	public TimeZone getServerTimeZone() {
@@ -676,14 +693,6 @@ public class CommandContext implements Cloneable, org.teiid.CommandContext {
 	
 	public void setTransactionService(TransactionService transactionService) {
 		globalState.transactionService = transactionService;
-	}
-	
-	public SourceHint getSourceHint() {
-		return this.globalState.sourceHint;
-	}
-	
-	public void setSourceHint(SourceHint hint) {
-		this.globalState.sourceHint = hint;
 	}
 	
 	public Executor getExecutor() {
@@ -983,6 +992,49 @@ public class CommandContext implements Cloneable, org.teiid.CommandContext {
 	
 	public static GlobalTableStoreImpl removeSessionScopedStore(SessionMetadata session) {
 		return session.removeAttachment(GlobalTableStoreImpl.class);
+	}
+	
+	@Override
+	public TeiidConnection getConnection() throws TeiidSQLException {
+		EmbeddedProfile ep = getDQPWorkContext().getConnectionProfile();
+		//TODO: this is problematic as the client properties are not conveyed
+		Properties info = new Properties();
+		info.put(EmbeddedProfile.DQP_WORK_CONTEXT, getDQPWorkContext());
+		String url = "jdbc:teiid:" + getVdbName() + "." + getVdbVersion(); //$NON-NLS-1$ //$NON-NLS-2$
+		ServerConnection sc;
+		try {
+			sc = ep.createServerConnection(info);
+		} catch (TeiidException e) {
+			throw TeiidSQLException.create(e);
+		}
+		return new ConnectionImpl(sc, info, url) {
+			@Override
+			public void close() throws SQLException {
+				//just ignore
+			}
+			
+			@Override
+			public void rollback() throws SQLException {
+				//just ignore
+			}
+			
+			@Override
+			public void setAutoCommit(boolean autoCommit) throws SQLException {
+				//TODO: detect if attempted set conflicts with current txn state
+				throw new TeiidSQLException();
+			}
+			
+			@Override
+			public void commit() throws SQLException {
+				throw new TeiidSQLException();
+			}
+
+			@Override
+			public void changeUser(String userName, String newPassword)
+					throws SQLException {
+				throw new TeiidSQLException();
+			}
+		};
 	}
 	
 }

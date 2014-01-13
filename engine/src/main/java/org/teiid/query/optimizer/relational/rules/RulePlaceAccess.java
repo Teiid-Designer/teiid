@@ -33,6 +33,9 @@ import org.teiid.api.exception.query.QueryMetadataException;
 import org.teiid.api.exception.query.QueryPlannerException;
 import org.teiid.api.exception.query.QueryResolverException;
 import org.teiid.core.TeiidComponentException;
+import org.teiid.core.util.StringUtil;
+import org.teiid.metadata.AbstractMetadataRecord;
+import org.teiid.query.QueryPlugin;
 import org.teiid.query.analysis.AnalysisRecord;
 import org.teiid.query.metadata.QueryMetadataInterface;
 import org.teiid.query.metadata.TempMetadataAdapter;
@@ -48,6 +51,7 @@ import org.teiid.query.resolver.util.ResolverUtil;
 import org.teiid.query.sql.lang.Create;
 import org.teiid.query.sql.lang.Drop;
 import org.teiid.query.sql.lang.Insert;
+import org.teiid.query.sql.lang.SourceHint;
 import org.teiid.query.sql.symbol.ElementSymbol;
 import org.teiid.query.sql.symbol.Expression;
 import org.teiid.query.sql.symbol.GroupSymbol;
@@ -61,7 +65,8 @@ import org.teiid.query.util.CommandContext;
 public final class RulePlaceAccess implements
                                   OptimizerRule {
 
-    private static final String RECONTEXT_STRING = "__"; //$NON-NLS-1$
+    public static final String CONFORMED_SOURCES = AbstractMetadataRecord.RELATIONAL_URI + "conformed-sources"; //$NON-NLS-1$
+	private static final String RECONTEXT_STRING = "__"; //$NON-NLS-1$
 
     public PlanNode execute(PlanNode plan,
                             QueryMetadataInterface metadata,
@@ -129,7 +134,10 @@ public final class RulePlaceAccess implements
             accessNode.addGroups(sourceNode.getGroups());
 
             copyDependentHints(sourceNode, accessNode);
-
+            SourceHint sourceHint = (SourceHint)sourceNode.removeProperty(Info.SOURCE_HINT);
+            //TODO: trim the hint to only the sources possible under this model (typically 1, but could be more in
+            //multi-source
+            accessNode.setProperty(Info.SOURCE_HINT, sourceHint);
             Object hint = sourceNode.removeProperty(NodeConstants.Info.IS_OPTIONAL);
             if (hint != null) {
                 accessNode.setProperty(NodeConstants.Info.IS_OPTIONAL, hint);
@@ -150,6 +158,26 @@ public final class RulePlaceAccess implements
 	            	accessNode.setProperty(Info.IS_MULTI_SOURCE, multiSource);
 	            }
 	            accessNode.setProperty(NodeConstants.Info.MODEL_ID, modelId);
+            }
+            
+            if (req == null && modelId != null) {
+            	//add "conformed" sources if they exist
+            	GroupSymbol group = sourceNode.getGroups().iterator().next();
+            	Object gid = group.getMetadataID();
+            	String sources = metadata.getExtensionProperty(gid, CONFORMED_SOURCES, false); 
+            	if (sources != null) {
+            		Set<Object> conformed = new HashSet<Object>();
+            		conformed.add(modelId);
+            		for (String source : StringUtil.split(sources, ",")) { //$NON-NLS-1$
+            			Object mid = metadata.getModelID(source.trim());
+            			if (metadata.isVirtualModel(mid)) {
+            				//TODO: could validate this up-front
+            				throw new QueryMetadataException(QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31148, metadata.getName(mid), group));
+            			}
+            			conformed.add(mid);
+            		}
+            		accessNode.setProperty(Info.CONFORMED_SOURCES, conformed);
+            	}
             }
             
             // Insert

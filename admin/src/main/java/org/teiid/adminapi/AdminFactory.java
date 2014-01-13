@@ -1172,6 +1172,20 @@ public class AdminFactory {
 	        props.add(cp);
 	        return props;
 		}
+		
+		@Override
+	    public Collection<? extends PropertyDefinition> getTranslatorPropertyDefinitions(String translatorName) throws AdminException{
+			BuildPropertyDefinitions builder = new BuildPropertyDefinitions();
+			Collection<? extends Translator> translators = getTranslators();
+			for (Translator t:translators) {
+				if (t.getName().equalsIgnoreCase(translatorName)) {
+	        		cliCall("read-translator-properties", new String[] {"subsystem", "teiid"}, new String[] {"translator-name", translatorName}, builder);
+	        		return builder.getPropertyDefinitions();
+				}
+			}
+			throw new AdminProcessingException(AdminPlugin.Event.TEIID70055, AdminPlugin.Util.gs(AdminPlugin.Event.TEIID70055, translatorName));
+	    }
+		
 
 		private class BuildPropertyDefinitions extends ResultCallback{
 			private ArrayList<PropertyDefinition> propDefinitions = new ArrayList<PropertyDefinition>();
@@ -1672,6 +1686,62 @@ public class AdminFactory {
 	            }
 	        } catch (IOException e) {
 	        	 throw new AdminComponentException(AdminPlugin.Event.TEIID70048, e);
+	        }
+		}
+		
+		@Override
+		public void updateSource(String vdbName, int vdbVersion, String sourceName, String translatorName,
+				String dsName) throws AdminException {
+	        final ModelNode request = buildRequest("teiid", "update-source",
+	        		"vdb-name", vdbName,
+	        		"vdb-version", String.valueOf(vdbVersion),
+	        		"source-name", sourceName,
+	        		"translator-name", translatorName,
+	        		"ds-name", dsName);//$NON-NLS-1$ //$NON-NLS-2$
+	        try {
+	            ModelNode outcome = this.connection.execute(request);
+	            if (!Util.isSuccess(outcome)) {
+	            	 throw new AdminProcessingException(AdminPlugin.Event.TEIID70047, Util.getFailureDescription(outcome));
+	            }
+	        } catch (Exception e) {
+	        	 throw new AdminProcessingException(AdminPlugin.Event.TEIID70048, e);
+	        }
+		}
+		
+		@Override
+		public void addSource(String vdbName, int vdbVersion, String modelName, String sourceName, String translatorName,
+				String dsName) throws AdminException {
+	        final ModelNode request = buildRequest("teiid", "add-source",
+	        		"vdb-name", vdbName,
+	        		"vdb-version", String.valueOf(vdbVersion),
+	        		"model-name", modelName,
+	        		"source-name", sourceName,
+	        		"translator-name", translatorName,
+	        		"ds-name", dsName);//$NON-NLS-1$ //$NON-NLS-2$
+	        try {
+	            ModelNode outcome = this.connection.execute(request);
+	            if (!Util.isSuccess(outcome)) {
+	            	 throw new AdminProcessingException(AdminPlugin.Event.TEIID70047, Util.getFailureDescription(outcome));
+	            }
+	        } catch (Exception e) {
+	        	 throw new AdminProcessingException(AdminPlugin.Event.TEIID70048, e);
+	        }
+		}
+		
+		@Override
+		public void removeSource(String vdbName, int vdbVersion, String modelName, String sourceName) throws AdminException {
+	        final ModelNode request = buildRequest("teiid", "remove-source",
+	        		"vdb-name", vdbName,
+	        		"vdb-version", String.valueOf(vdbVersion),
+	        		"model-name", modelName,
+	        		"source-name", sourceName);//$NON-NLS-1$ //$NON-NLS-2$
+	        try {
+	            ModelNode outcome = this.connection.execute(request);
+	            if (!Util.isSuccess(outcome)) {
+	            	 throw new AdminProcessingException(AdminPlugin.Event.TEIID70047, Util.getFailureDescription(outcome));
+	            }
+	        } catch (Exception e) {
+	        	 throw new AdminProcessingException(AdminPlugin.Event.TEIID70048, e);
 	        }
 		}
 

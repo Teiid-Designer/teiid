@@ -40,6 +40,7 @@ import org.teiid.core.types.DataTypeManager;
 import org.teiid.core.util.StringUtil;
 import org.teiid.language.SQLConstants;
 import org.teiid.language.SQLConstants.NonReserved;
+import org.teiid.language.SQLConstants.Tokens;
 import org.teiid.metadata.*;
 import org.teiid.metadata.BaseColumn.NullType;
 import org.teiid.metadata.FunctionMethod.Determinism;
@@ -151,27 +152,33 @@ public class DDLStringVisitor {
 			append(FOREIGN_TABLE);
 		}
 		else {
-			append(VIEW);
+			if (table.getTableType() == Table.Type.TemporaryTable) {
+				append(GLOBAL).append(SPACE).append(TEMPORARY).append(SPACE).append(TABLE);
+			} else {
+				append(VIEW);
+			}
 		}
 		append(SPACE);
 		String name = addTableBody(table);
 		
-		if (table.isVirtual()) {
-			append(NEWLINE).append(SQLConstants.Reserved.AS).append(NEWLINE).append(table.getSelectTransformation());
+		if (table.getTableType() != Table.Type.TemporaryTable) {
+			if (table.isVirtual()) {
+				append(NEWLINE).append(SQLConstants.Reserved.AS).append(NEWLINE).append(table.getSelectTransformation());
+			}
+			append(SQLConstants.Tokens.SEMICOLON);
+			
+			if (table.isInsertPlanEnabled()) {
+				buildTrigger(name, INSERT, table.getInsertPlan());
+			}
+			
+			if (table.isUpdatePlanEnabled()) {
+				buildTrigger(name, UPDATE, table.getUpdatePlan());
+			}	
+			
+			if (table.isDeletePlanEnabled()) {
+				buildTrigger(name, DELETE, table.getDeletePlan());
+			}			
 		}
-		append(SQLConstants.Tokens.SEMICOLON);
-		
-		if (table.isInsertPlanEnabled()) {
-			buildTrigger(name, INSERT, table.getInsertPlan());
-		}
-		
-		if (table.isUpdatePlanEnabled()) {
-			buildTrigger(name, UPDATE, table.getUpdatePlan());
-		}	
-		
-		if (table.isDeletePlanEnabled()) {
-			buildTrigger(name, DELETE, table.getDeletePlan());
-		}			
 	}
 
 	public String addTableBody(Table table) {
@@ -189,7 +196,7 @@ public class DDLStringVisitor {
 				else {
 					append(COMMA);
 				}
-				visit(c);
+				visit(table, c);
 			}
 			buildContraints(table);
 			append(NEWLINE);
@@ -232,7 +239,11 @@ public class DDLStringVisitor {
 			addOption(options, UPDATABLE, table.supportsUpdate());
 		}
 		if (table.getCardinality() != -1) {
-			addOption(options, CARDINALITY, table.getCardinality());
+			if (table.getCardinality() != table.getCardinalityAsFloat()) {
+				addOption(options, CARDINALITY, (long)table.getCardinalityAsFloat());
+			} else {
+				addOption(options, CARDINALITY, table.getCardinality());
+			}
 		}
 		if (!table.getProperties().isEmpty()) {
 			for (String key:table.getProperties().keySet()) {
@@ -270,8 +281,10 @@ public class DDLStringVisitor {
 			ForeignKey key = table.getForeignKeys().get(i);
 			addConstraint("FK" + i, FOREIGN_KEY, key, false); //$NON-NLS-1$
 			append(SPACE).append(REFERENCES);
-			if (key.getReferenceTableName() != null) {
-				append(SPACE).append(new GroupSymbol(key.getReferenceTableName()).getName());
+			if (key.getPrimaryKey() != null) {
+				append(SPACE).append(new GroupSymbol(key.getPrimaryKey().getParent().getFullName()));
+			} else if (key.getReferenceTableName() != null) {
+				append(SPACE).append(new GroupSymbol(key.getReferenceTableName()));
 			}
 			append(SPACE);
 			addNames(key.getReferenceColumns());
@@ -340,12 +353,18 @@ public class DDLStringVisitor {
 		}
 	}	
 	
-	private void visit(Column column) {
+	private void visit(Table table, Column column) {
 		append(NEWLINE).append(TAB);
-		appendColumn(column, true, true);
-		
-		if (column.isAutoIncremented()) {
-			append(SPACE).append(AUTO_INCREMENT);
+		if (table.getTableType() == Table.Type.TemporaryTable && column.isAutoIncremented() && column.getNullType() == NullType.No_Nulls && column.getJavaType() == DataTypeManager.DefaultDataClasses.INTEGER) {
+			append(SQLStringVisitor.escapeSinglePart(column.getName()));
+			append(SPACE);
+			append(SERIAL);
+		} else {
+			appendColumn(column, true, true);
+			
+			if (column.isAutoIncremented()) {
+				append(SPACE).append(AUTO_INCREMENT);
+			}
 		}
 		
 		appendDefault(column);
@@ -381,6 +400,9 @@ public class DDLStringVisitor {
 					append(COMMA).append(column.getScale());
 				}
 				append(RPAREN);
+			}
+			for (int dims = column.getArrayDimensions(); dims > 0; dims--) {
+				append(Tokens.LSBRACE).append(Tokens.RSBRACE);
 			}
 			if (column.getNullType() == NullType.No_Nulls) {
 				append(SPACE).append(NOT_NULL);

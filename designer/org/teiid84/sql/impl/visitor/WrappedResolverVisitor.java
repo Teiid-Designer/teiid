@@ -23,8 +23,7 @@ public class WrappedResolverVisitor
 
     @Override
     public void setProperty(String propertyName, Object value) {
-        if (SHORT_NAME.equals(propertyName) && value instanceof Boolean)
-            ResolverVisitor.setFindShortName((Boolean) value);
+        // Nothing to do
     }
 
     @Override

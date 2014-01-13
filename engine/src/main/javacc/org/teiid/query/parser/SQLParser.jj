@@ -786,36 +786,23 @@ Command userCommand(ParseInfo info) :
 {
 	Command command = null;
 	SourceHint sourceHint = null;
+	Block block = null;
 }
 {
-    {int index = 1; 
-     Token t = null;
-     do  
-       t = getToken(index++);
-     while (t != null && t.kind == LPAREN);
-     t = getToken(index);
-     if (t != null) 
-      sourceHint = getSourceHint(t); 
-    }
 	(command = queryExpression(info) |
 	command = storedProcedure(info, 1) |
-	command = insert(info) |
-	command = update(info) |
-	command = delete(info) |
+	{ sourceHint = getSourceHint(this); } command = insert(info) |
+	{ sourceHint = getSourceHint(this); } command = update(info) |
+	{ sourceHint = getSourceHint(this); } command = delete(info) |
 	command = dropTable(info) |
 	LOOKAHEAD(2) command = createTempTable(info) |
 	LOOKAHEAD(2) command = createForeignTempTable(info) |
 	command = alter(info) |
-	command = createTrigger(info)
+	command = createTrigger(info) |
+	block = compoundStatement(info) {command = new CreateProcedureCommand(block);}
 	)
 	{
-	    if (sourceHint != null) {
-	        if (command instanceof SetQuery) {
-	        	((SetQuery)command).getProjectedQuery().setSourceHint(sourceHint);
-	        } else {
-	    		command.setSourceHint(sourceHint);
-	    	}
-	    }
+		setSourceHint(sourceHint, command);
 		return command;
 	}
 }
@@ -853,7 +840,7 @@ Command createTempTable(ParseInfo info) :
 	List<ElementSymbol> pk = null;
 }
 {
-	<CREATE> <LOCAL> <TEMPORARY> <TABLE> 
+	<CREATE> [<LOCAL>] <TEMPORARY> <TABLE> 
 	table = id(null)
 	<LPAREN>
 	{
@@ -1362,7 +1349,7 @@ CreateProcedureCommand  createProcedure(ParseInfo info) :
 /*
 name=procedure body definition
 description=Defines a procedure body on a Procedure metadata object.
-example={code:sql}CREATE VIRTUAL PROCEDURE BEGIN ... END{code}
+example={code:sql}BEGIN ... END{code}
 index=true
 */
 CreateProcedureCommand  procedureBodyCommand(ParseInfo info) :
@@ -1568,8 +1555,10 @@ StoredProcedure storedProcedure(ParseInfo info, int startIndex) :
 	Option option = null;
 	List<Expression> values = null;
 	StoredProcedure storedProcedure = new StoredProcedure();
+	SourceHint sourceHint = null;
 }
 {
+	{ sourceHint = getSourceHint(this); }
 	(
 		(<EXEC> | <EXECUTE> | <CALL>)
 		procName = id(null)
@@ -1595,6 +1584,7 @@ StoredProcedure storedProcedure(ParseInfo info, int startIndex) :
 	 }
 	]
 	{
+		storedProcedure.setSourceHint(sourceHint);
 		return storedProcedure;
 	}
 }
@@ -1662,22 +1652,10 @@ Insert insert(ParseInfo info) :
 	  insert.setVariables(columns);
 	}]
 
-	(
-		( <VALUES> <LPAREN>
-		  values = expressionList(info)
-		  <RPAREN>
-		  {
-		    // Store each row of values
-		    insert.setValues(values);
-		  }
-		)
-		|
-		( query = queryExpression(info)
-		  {
-		    insert.setQueryExpression(query);
-		  }
-		)
-	)
+    query = queryExpression(info)
+	{
+	  insert.setQueryExpression(query);
+    }
 	
 	[ option = option(info)
 	  {
@@ -1798,6 +1776,7 @@ QueryCommand queryExpression(ParseInfo info) :
 	QueryCommand query = null;
 	List<WithQueryCommand> withList = null;
 	WithQueryCommand withQueryCommand = null;
+	SourceHint sourceHint = null;
 }
 {
 	[<WITH> withQueryCommand = withListElement(info)
@@ -1812,9 +1791,11 @@ QueryCommand queryExpression(ParseInfo info) :
 	    }
 	  )*
 	]
+	{ sourceHint = getSourceHint(this); }
 	query = queryExpressionBody(info)
 	{
 		query.setWith(withList);
+		setSourceHint(sourceHint, query);
 		return query;
 	}
 }
@@ -1907,10 +1888,21 @@ QueryCommand queryPrimary(ParseInfo info) :
 {
     QueryCommand query = null;
     String name = null;
+    List<Expression> expr = null;
 }
 {
     (
-        query=query(info) | 
+        query=query(info) |
+        (<VALUES> <LPAREN> expr = expressionList(info) 
+         {
+           query = Query.rowConstructor(expr);
+         } 
+         <RPAREN> 
+          (<COMMA> <LPAREN> expr = expressionList(info) 
+           { 
+             query = new SetQuery(SetQuery.Operation.UNION, true, query, Query.rowConstructor(expr));
+           } 
+          <RPAREN>)*) | 
         (<TABLE> name=id(null) {
            Query q = new Query();
            q.setSelect(new Select(Arrays.asList(new MultipleElementSymbol())));
@@ -2390,6 +2382,7 @@ FromClause tablePrimary(ParseInfo info) :
 {
 	FromClause clause = null;
 	Token lparen = null;
+	Option.MakeDep makedep = null;
 }
 {
 	(	LOOKAHEAD(2) clause = textTable(info)
@@ -2411,12 +2404,35 @@ FromClause tablePrimary(ParseInfo info) :
 		 <RPAREN> 
 		)
 	)
-	[	(<MAKEDEP>  { clause.setMakeDep(true); })
+	[	(<MAKEDEP> makedep = makedepOptions() { clause.setMakeDep(makedep); })
 	 	| (<MAKENOTDEP> {  clause.setMakeNotDep(true); } )
 	]
 	{
 		return clause;
 	}
+}
+
+/*
+name=make dep options
+description=options for the make dep hint
+example={code:sql}(min:10000){code}
+*/
+Option.MakeDep makedepOptions() :
+{
+	Integer max = null;
+	boolean join = false;
+}
+{
+ [<LPAREN>
+	[<MAX><COLON> max = intVal()]
+	[<JOIN> {join = true;}]
+  <RPAREN>]
+ {
+ 	Option.MakeDep result = new Option.MakeDep();
+ 	result.setMax(max);
+ 	result.setJoin(join);
+ 	return result;
+ }
 }
 
 /*
@@ -3382,12 +3398,23 @@ example={code:sql}GROUP BY col1, col2{code}
 GroupBy groupBy(ParseInfo info) :
 {
 	List<Expression> expressions = null;
+	boolean rollup = false;
 }
 {
 	<GROUP> <BY>
-    expressions = expressionList(info)	
+	(<ROLLUP><LPAREN>
+     expressions = expressionList(info)
+     <RPAREN>
+     {
+       rollup = true;
+     }
+     |
+     expressions = expressionList(info)
+    )	
 	{
-		return new GroupBy(expressions);
+		GroupBy result = new GroupBy(expressions);
+		result.setRollup(rollup);
+		return result;
 	}
 }
 
@@ -3494,15 +3521,18 @@ example={code:sql}?{code}
 */
 Expression intParam(ParseInfo info) :
 {
+   Expression ex = null;
    Integer val = null;
 }
 {
-   (val = intVal() | <QMARK>)
+   val = intVal() 
    {
-     if (val == null) {
-       return new Reference(info.referenceCount++);
-     } 
      return new Constant(val, DataTypeManager.DefaultDataClasses.INTEGER);
+   }
+   |
+   ex = unsignedValueExpressionPrimary(info)
+   {
+     return ex;
    }
 }
 
@@ -3568,19 +3598,20 @@ Option option(ParseInfo info) :
 	String id = null;
 	Token nocache = null;
 	Option option = new Option();
+	Option.MakeDep makedep = null;
 }
 {
 	<OPTION>
 	(
 		<MAKEDEP>		
-		id=id(null)
+		id=id(null) makedep = makedepOptions()
 		{
-            option.addDependentGroup(id);
+            option.addDependentGroup(id, makedep);
 		}
 		(<COMMA>
-			id=id(null)
+			id=id(null) makedep = makedepOptions()
 			{
-                option.addDependentGroup(id);
+    	        option.addDependentGroup(id, makedep);
 	        }
 		)* |
 		<MAKENOTDEP>		
@@ -3760,6 +3791,8 @@ Expression valueExpressionPrimary(ParseInfo info) :
 {
 	String strVal = null;
 	Expression ex = null;
+	Expression indexExpr = null;
+    List<Expression> indexExprs = null;
 }
 {
 	// Literal
@@ -3767,17 +3800,104 @@ Expression valueExpressionPrimary(ParseInfo info) :
 	| [strVal = plusMinus()] 
 	  (ex = unsignedNumericLiteral(strVal)
 	   |
-	   ex = unsignedValueExpressionPrimary(info) {
-	     if (strVal != null && strVal.charAt(0) == '-') {
-	     	ex = new Function("*", new Expression[] { new Constant(-1), ex });
-	     }
-	    }
+	   (ex = unsignedValueExpressionPrimary(info)
+	    //array element reference expressions
+        (<LSBRACE> indexExpr = plusExpression(info) <RSBRACE> {
+           indexExprs = arrayExpressions(indexExprs, indexExpr);
+           }
+        )*
+        {
+          if (indexExprs != null) {
+            for (Expression expr : indexExprs) {
+                ex = new Function("array_get", new Expression[] {ex, expr});
+            }
+          }
+        }
+	   ) {
+         if (strVal != null && strVal.charAt(0) == '-') {
+            ex = new Function("*", new Expression[] { new Constant(-1), ex });
+         }
+        }
 	   )
 	 )
 	 {
 		return ex;	 
 	 }  
 }
+
+/*
+name=parameter reference
+description=A parameter reference to be bound later.
+example={code:sql}?{code}
+*/
+Reference parameterReference(ParseInfo info) :
+{
+    Integer index = null;
+}
+{
+    <QMARK> {return new Reference(info.referenceCount++);}
+    |
+    (<DOLLAR> index = intVal() {return new Reference(index -1); })
+}
+
+Expression unescapedFunction(ParseInfo info) :
+{
+    Expression expression = null;
+    Expression condition = null;
+    
+}
+{
+    // Aggregate function
+    (LOOKAHEAD(2) ((expression=textAgg(info) | expression=aggregateSymbol(info) | expression=orderedAgg(info)) [condition = filterClause(info)] [expression = windowSpecification(expression, info)])
+    |
+    LOOKAHEAD(2) (expression=analyticAggregateSymbol(info) [condition = filterClause(info)] expression = windowSpecification(expression, info))
+    |
+    // Function
+    LOOKAHEAD(2) (expression=function(info) [expression = windowSpecification(expression, info)]))
+    {
+        if (condition != null) {
+            if (expression instanceof WindowFunction) {
+                ((WindowFunction)expression).getFunction().setCondition(condition);
+            } else {
+                ((AggregateSymbol)expression).setCondition(condition);
+            }
+        }
+        return expression;
+    }
+}
+
+/*
+name=nested expression
+description=An expression nested in parens
+example={code:sql}(1){code}
+*/
+Expression nestedExpression(ParseInfo info) :
+{
+    Expression expression = null;
+    Expression arrayExpression = null;
+    List<Expression> arrayExpressions = null;
+}
+{
+    ( <LPAREN> 
+        [expression = expression(info)
+        (LOOKAHEAD(2) <COMMA>arrayExpression = expression(info) {
+          if (expression != null) {
+             arrayExpressions = arrayExpressions(arrayExpressions, expression);
+             expression = null;
+          } 
+          arrayExpressions = arrayExpressions(arrayExpressions, arrayExpression);})*]
+        [<COMMA> {arrayExpressions = arrayExpressions(arrayExpressions, expression);} ]
+      <RPAREN>
+    )
+    {
+        if (arrayExpressions != null) {
+            expression = new Array(arrayExpressions);
+        } else if (expression == null) {
+            expression = new Array(new ArrayList<Expression>(0));
+        }
+        return expression;
+    }
+}    
 
 /*
 name=unsigned value expression primary
@@ -3789,30 +3909,19 @@ Expression unsignedValueExpressionPrimary(ParseInfo info) :
 	Expression expression = null;
 	Token symbol = null;
 	QueryCommand subquery = null;
-	Integer index = null;
-	Expression condition = null;
-	Expression indexExpr = null;
 }
 {
-        (
+    (
 		// Reference
-		<QMARK> {return new Reference(info.referenceCount++);}
-		|
-		(<DOLLAR> index = intVal() {return new Reference(index -1); })
+		expression = parameterReference(info)
 		|
 		// Escaped function
 		(	<ESCAPEDFUNCTION>
 			expression=function(info)
 			<RBRACE>
 		)
-		|		
-		// Aggregate function
-		LOOKAHEAD(2) ((expression=textAgg(info) | expression=aggregateSymbol(info) | expression=orderedAgg(info)) [condition = filterClause(info)] [expression = windowSpecification(expression, info)])
 		|
-		LOOKAHEAD(2) (expression=analyticAggregateSymbol(info) [condition = filterClause(info)] expression = windowSpecification(expression, info))
-		|
-		// Function
-		LOOKAHEAD(2) (expression=function(info) [expression = windowSpecification(expression, info)])
+		LOOKAHEAD(2) expression = unescapedFunction(info)		
 		|
 		// ElementSymbol
 		((symbol=<ID> {
@@ -3820,41 +3929,20 @@ Expression unsignedValueExpressionPrimary(ParseInfo info) :
 				if(isStringLiteral(symbolImage, info)) {
 				    return new Constant(normalizeStringLiteral(symbolImage));
 				}  
-			} | symbol=nonReserved()) 
-			(<LSBRACE> indexExpr = commonValueExpression(info) <RSBRACE>)?
+			} | symbol=nonReserved()) {expression = new ElementSymbol(normalizeId(symbol.image));} 
 		)
 		|
-		LOOKAHEAD(subquery(info)) subquery = subquery(info)
+		LOOKAHEAD(subquery(info)) subquery = subquery(info) {expression = new ScalarSubquery(subquery);}
 		|
-		( <LPAREN> 
- 			expression = expression(info)
-		  <RPAREN>
-		  (<LSBRACE> indexExpr = commonValueExpression(info) <RSBRACE>)?
-		)
+		expression = nestedExpression(info)
 		|
 		// Searched CASE expressions
 		LOOKAHEAD(2) expression = searchedCaseExpression(info)
 		|
 		// Non-searched CASE expressions
 		expression = caseExpression(info)
-	)						
-		
+	)
 	{
-		if(symbol != null) {
-			expression = new ElementSymbol(normalizeId(symbol.image));
-		} else if (subquery != null){
-			expression = new ScalarSubquery(subquery);
-		}
-		if (condition != null) {
-			if (expression instanceof WindowFunction) {
-    	   		((WindowFunction)expression).getFunction().setCondition(condition);
-           	} else {
-                ((AggregateSymbol)expression).setCondition(condition);
-          	}
-		}
-		if (indexExpr != null) {
-			expression = new Function("array_get", new Expression[] {expression, indexExpr});		
-		}
 		return expression;
 	}
 }
@@ -3871,9 +3959,13 @@ Expression windowSpecification(Expression agg, ParseInfo info) :
 }
 {
 	<OVER> { 
-	if (!(agg instanceof AggregateSymbol)) {
-	   		throw new ParseException(QueryPlugin.Util.getString("SQLParser.invalid_window", agg)); //$NON-NLS-1$
-    	}
+	  if (!(agg instanceof AggregateSymbol)) {
+	    if (!(agg instanceof Function)) {
+	      throw new ParseException(QueryPlugin.Util.getString("SQLParser.invalid_window", agg)); //$NON-NLS-1$
+	    }
+	    Function f = (Function)agg;
+	    agg = new AggregateSymbol(f.getName(), false, f.getArgs(), null);
+	  }
     }
     <LPAREN> 
     [<PARTITION> <BY> partitionList = expressionList(info)]
@@ -4447,11 +4539,11 @@ XMLNamespaces.NamespaceItem namespaceItem() :
 }
 
 /*
-name=data type
-description=A data type.
+name=simple data type
+description=A non-collection data type.
 example={code:sql}STRING{code}
 */
-ParsedDataType parseDataType() :
+ParsedDataType parseDataTypePrimary() :
 {
 	Token typeToken = null;
 	Integer length = null;
@@ -4485,18 +4577,38 @@ ParsedDataType parseDataType() :
 		(typeToken = <CLOB> ([<LPAREN>length=intVal()<RPAREN>]) {precision = false;} )|
 		(typeToken = <VARBINARY> ([<LPAREN>length=intVal()<RPAREN>]) {precision = false;} ) |
 		typeToken = <XML>
-		
 	)
-	
 	{
+	    String typeName = typeToken.image;
 		if (scale != null){
-			return new ParsedDataType(typeToken.image, length, scale, precision);
+			return new ParsedDataType(typeName, length, scale, precision);
 		}
 		else if (length != null){
-			return new ParsedDataType(typeToken.image, length, precision);
+			return new ParsedDataType(typeName, length, precision);
 		}
-		return new ParsedDataType(typeToken.image);
+		return new ParsedDataType(typeName);
 	}
+}
+
+/*
+name=data type
+description=A data type.
+example={code:sql}STRING[]{code}
+*/
+ParsedDataType parseDataType() :
+{
+    int arraySuffixes = 0;
+    ParsedDataType type = null;
+}
+{
+    type = parseDataTypePrimary()
+    (<LSBRACE><RSBRACE> {arraySuffixes++;})*
+    {
+        if (arraySuffixes > 0) {
+           type.type += StringUtil.join(Collections.nCopies(arraySuffixes, "[]"), "");
+        }
+        return type;
+    }
 }
 
 /*
@@ -4822,17 +4934,25 @@ example={code:sql}CREATE VIEW vw AS SELECT 1{code}
 void createTable(MetadataFactory factory) :
 {
 	boolean view = false;
+	boolean globalTemp = false;
 	String tableName = null;
 	Table table = null;
 	Token comment = null;
 	Command query = null;
 }
 {
-	<CREATE> (<FOREIGN> <TABLE> | [<VIRTUAL>] <VIEW> {view = true;}) 
+	<CREATE> (
+		(<FOREIGN> <TABLE>) | 
+		([<VIRTUAL>] <VIEW> {view = true;}) |
+		(<GLOBAL> <TEMPORARY> <TABLE> {globalTemp = true; view = true;})
+	) 
 	tableName = id(null)
 	{
 	    table = factory.addTable(tableName);
 	    table.setVirtual(view);
+	    if (globalTemp) {
+	    	table.setTableType(Table.Type.TemporaryTable);
+	    }
 	}
 	(createTableBody(table, factory) | [optionsClause(table, factory)
 	   {
@@ -4841,7 +4961,7 @@ void createTable(MetadataFactory factory) :
 	])
 	[<AS> { comment = getToken(1).specialToken; } query = queryExpression(ParseInfo.DEFAULT_INSTANCE)
 	  {
-		   if (!view) {
+		   if (!view || globalTemp) {
      		   throw new MetadataException(QueryPlugin.Util.getString("SQLParser.view_def", table.getName()));
 		   }
 		   table.setSelectTransformation((comment != null?comment.image+" ":"") + query.toString());	
@@ -4862,7 +4982,7 @@ Create createForeignTempTable(ParseInfo info) :
 	MetadataFactory factory = getTempMetadataFactory();
 }
 {
-	<CREATE> <FOREIGN> <TEMPORARY> <TABLE>
+	<CREATE> [<LOCAL>] <FOREIGN> <TEMPORARY> <TABLE>
 	tableName = id(null)
 	{
 		table = new Table();
@@ -5046,7 +5166,7 @@ void createColumn(MetadataFactory factory, Table table) :
 	String element = null;
 	ParsedDataType type = null;
 	boolean autoIncrement = false;
-	Boolean notNull = false;
+	boolean notNull = false;
 	String defalt = null;
 	Column column = null;
 	List<String> columnName = new ArrayList<String>();
@@ -5058,16 +5178,25 @@ void createColumn(MetadataFactory factory, Table table) :
 {
 	 element = id(Boolean.TRUE)
 	 (
-	  type = parseDataType()
-	  {
-		column = factory.addColumn(element, type.type, table);
-		column.setUpdatable(true);
-	    setTypeInfo(type, column);		    	
-		columnName.add(element);
-	  }
+      <SERIAL>
+      {
+        type = new ParsedDataType("INTEGER");
+        autoIncrement = true;
+        notNull = true;
+      }
+      |
+      (
+	    type = parseDataType()
+	    [<NOT> <NULL> { notNull = true; }]
+        [<AUTO_INCREMENT> {  autoIncrement = true; }]
+	  )
 	 )
-	 [<NOT> <NULL> { column.setNullType(Column.NullType.No_Nulls); }]
-	 [<AUTO_INCREMENT> {  autoIncrement = true; }]
+	 {
+       column = factory.addColumn(element, type.type, table);
+       column.setUpdatable(true);
+       setTypeInfo(type, column);                
+       columnName.add(element);
+     }
 	 ((<PRIMARY> <KEY> { pk = true; }) | ([<UNIQUE> { unique = true;  }] [<INDEX> { index = true; }]))
 	 [<DEFAULT_KEYWORD> defalt = stringVal() {column.setDefaultValue(defalt);}]
 	 [optionsClause(column, factory)
@@ -5086,7 +5215,9 @@ void createColumn(MetadataFactory factory, Table table) :
 	    	}
 	 		factory.addPrimaryKey("PK", columnName, table);
 	 	}
-	     	 	
+	 	if (notNull) {
+	       column.setNullType(Column.NullType.No_Nulls);
+	    }
 	    column.setAutoIncremented(autoIncrement);
 	 }
 }

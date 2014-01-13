@@ -22,8 +22,21 @@
 
 package org.teiid.query.optimizer.relational;
 
-import java.util.*;
-
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import org.teiid.api.exception.query.QueryMetadataException;
 import org.teiid.api.exception.query.QueryPlannerException;
 import org.teiid.client.plan.Annotation;
@@ -32,14 +45,20 @@ import org.teiid.common.buffer.LobManager;
 import org.teiid.core.TeiidComponentException;
 import org.teiid.core.TeiidProcessingException;
 import org.teiid.core.id.IDGenerator;
+import org.teiid.core.types.DataTypeManager;
 import org.teiid.core.util.HashCodeUtil;
+import org.teiid.designer.udf.IFunctionLibrary;
 import org.teiid.dqp.internal.process.Request;
 import org.teiid.language.SQLConstants;
 import org.teiid.metadata.Procedure;
 import org.teiid.query.QueryPlugin;
 import org.teiid.query.analysis.AnalysisRecord;
+import org.teiid.query.function.FunctionDescriptor;
+import org.teiid.query.function.FunctionLibrary;
 import org.teiid.query.mapping.relational.QueryNode;
 import org.teiid.query.metadata.BasicQueryMetadata;
+import org.teiid.query.metadata.MaterializationMetadataRepository;
+import org.teiid.query.metadata.MaterializationMetadataRepository.ErrorAction;
 import org.teiid.query.metadata.QueryMetadataInterface;
 import org.teiid.query.metadata.TempMetadataAdapter;
 import org.teiid.query.metadata.TempMetadataID;
@@ -55,8 +74,10 @@ import org.teiid.query.optimizer.relational.plantree.NodeFactory;
 import org.teiid.query.optimizer.relational.plantree.PlanNode;
 import org.teiid.query.optimizer.relational.rules.CapabilitiesUtil;
 import org.teiid.query.optimizer.relational.rules.CriteriaCapabilityValidatorVisitor;
+import org.teiid.query.optimizer.relational.rules.FrameUtil;
 import org.teiid.query.optimizer.relational.rules.RuleApplySecurity;
 import org.teiid.query.optimizer.relational.rules.RuleAssignOutputElements;
+import org.teiid.query.optimizer.relational.rules.RuleChooseDependent;
 import org.teiid.query.optimizer.relational.rules.RuleCollapseSource;
 import org.teiid.query.optimizer.relational.rules.RuleConstants;
 import org.teiid.query.optimizer.relational.rules.RuleMergeCriteria;
@@ -75,16 +96,60 @@ import org.teiid.query.rewriter.QueryRewriter;
 import org.teiid.query.sql.LanguageObject;
 import org.teiid.query.sql.LanguageObject.Util;
 import org.teiid.query.sql.LanguageVisitor;
-import org.teiid.query.sql.lang.*;
+import org.teiid.query.sql.lang.ArrayTable;
+import org.teiid.query.sql.lang.CacheHint;
+import org.teiid.query.sql.lang.Command;
+import org.teiid.query.sql.lang.CompareCriteria;
+import org.teiid.query.sql.lang.CompoundCriteria;
+import org.teiid.query.sql.lang.Criteria;
+import org.teiid.query.sql.lang.Delete;
+import org.teiid.query.sql.lang.ExistsCriteria;
+import org.teiid.query.sql.lang.FilteredCommand;
+import org.teiid.query.sql.lang.From;
+import org.teiid.query.sql.lang.FromClause;
+import org.teiid.query.sql.lang.GroupBy;
+import org.teiid.query.sql.lang.Insert;
+import org.teiid.query.sql.lang.IsNullCriteria;
+import org.teiid.query.sql.lang.JoinPredicate;
+import org.teiid.query.sql.lang.JoinType;
+import org.teiid.query.sql.lang.Limit;
+import org.teiid.query.sql.lang.Option;
+import org.teiid.query.sql.lang.OrderBy;
+import org.teiid.query.sql.lang.ProcedureContainer;
+import org.teiid.query.sql.lang.Query;
+import org.teiid.query.sql.lang.QueryCommand;
+import org.teiid.query.sql.lang.SPParameter;
+import org.teiid.query.sql.lang.Select;
+import org.teiid.query.sql.lang.SetQuery;
+import org.teiid.query.sql.lang.SourceHint;
+import org.teiid.query.sql.lang.StoredProcedure;
+import org.teiid.query.sql.lang.SubqueryContainer;
+import org.teiid.query.sql.lang.SubqueryFromClause;
+import org.teiid.query.sql.lang.TableFunctionReference;
+import org.teiid.query.sql.lang.TargetedCommand;
+import org.teiid.query.sql.lang.UnaryFromClause;
+import org.teiid.query.sql.lang.Update;
+import org.teiid.query.sql.lang.WithQueryCommand;
 import org.teiid.query.sql.navigator.PreOrPostOrderNavigator;
 import org.teiid.query.sql.proc.CreateProcedureCommand;
 import org.teiid.query.sql.proc.TriggerAction;
-import org.teiid.query.sql.symbol.*;
+import org.teiid.query.sql.symbol.AggregateSymbol;
+import org.teiid.query.sql.symbol.AliasSymbol;
+import org.teiid.query.sql.symbol.Constant;
+import org.teiid.query.sql.symbol.ElementSymbol;
+import org.teiid.query.sql.symbol.Expression;
+import org.teiid.query.sql.symbol.ExpressionSymbol;
+import org.teiid.query.sql.symbol.Function;
+import org.teiid.query.sql.symbol.GroupSymbol;
+import org.teiid.query.sql.symbol.Reference;
+import org.teiid.query.sql.symbol.ScalarSubquery;
+import org.teiid.query.sql.symbol.WindowFunction;
 import org.teiid.query.sql.util.SymbolMap;
 import org.teiid.query.sql.visitor.AggregateSymbolCollectorVisitor;
 import org.teiid.query.sql.visitor.CorrelatedReferenceCollectorVisitor;
 import org.teiid.query.sql.visitor.ElementCollectorVisitor;
 import org.teiid.query.sql.visitor.ExpressionMappingVisitor;
+import org.teiid.query.sql.visitor.FunctionCollectorVisitor;
 import org.teiid.query.sql.visitor.GroupCollectorVisitor;
 import org.teiid.query.sql.visitor.GroupsUsedByElementsVisitor;
 import org.teiid.query.sql.visitor.ValueIteratorProviderCollectorVisitor;
@@ -136,6 +201,7 @@ public class RelationalPlanner {
 			return HashCodeUtil.hashCode(group.getMetadataID().hashCode(), command.getType());
 		}
 		
+		@Override
 		public boolean equals(Object obj) {
 			if (obj == this) {
 				return true;
@@ -155,12 +221,13 @@ public class RelationalPlanner {
 	}
 	
 	private static ThreadLocal<HashSet<PlanningStackEntry>> planningStack = new ThreadLocal<HashSet<PlanningStackEntry>>() {
+		@Override
 		protected HashSet<PlanningStackEntry> initialValue() {
 			return new LinkedHashSet<PlanningStackEntry>();
 		}
 	};
 	
-    public ProcessorPlan optimize(
+    public RelationalPlan optimize(
         Command command)
         throws
             QueryPlannerException,
@@ -173,6 +240,9 @@ public class RelationalPlanner {
             analysisRecord.println("GENERATE CANONICAL: \n" + command); //$NON-NLS-1$
 		}   
 		
+		SourceHint previous = this.sourceHint;
+		this.sourceHint = SourceHint.combine(previous, command.getSourceHint());
+		
 		PlanToProcessConverter planToProcessConverter = new PlanToProcessConverter(metadata, idGenerator, analysisRecord, capFinder, context);
 		
 		//plan with
@@ -184,13 +254,16 @@ public class RelationalPlanner {
 			withList = queryCommand.getWith();
 			if (withList != null) {
 	        	for (WithQueryCommand with : withList) {
+	        		context.getGroups().add(with.getGroupSymbol().getName());
 	        		QueryCommand subCommand = with.getCommand();
-	                ProcessorPlan plan = QueryOptimizer.optimizePlan(subCommand, metadata, idGenerator, capFinder, analysisRecord, context);
+	        		if (subCommand instanceof Query && ((Query)subCommand).getIsXML()) {
+	        			ProcessorPlan plan = QueryOptimizer.optimizePlan(subCommand, metadata, idGenerator, capFinder, analysisRecord, context);
+	        			subCommand.setProcessorPlan(plan);
+	        			continue;
+	        		}
+	                RelationalPlan plan = optimize(subCommand);
 	                subCommand.setProcessorPlan(plan);
-	                if (!(plan instanceof RelationalPlan)) {
-	                	continue;
-	                }
-	                RelationalPlan procPlan = (RelationalPlan) plan;
+	                RelationalPlan procPlan = plan;
 	                RelationalNode root = procPlan.getRootNode();
 	                Number planCardinality = root.getEstimateNodeCardinality();
 	                if (planCardinality != null) {
@@ -200,7 +273,7 @@ public class RelationalPlanner {
 	                if (aNode == null) {
 	                	continue;
 	                }
-                	Object modelID = CriteriaCapabilityValidatorVisitor.validateCommandPushdown(null, metadata, capFinder, aNode);
+                	Object modelID = CriteriaCapabilityValidatorVisitor.validateCommandPushdown(null, metadata, capFinder, aNode, false);
                 	QueryCommand withCommand = CriteriaCapabilityValidatorVisitor.getQueryCommand(aNode);
 	                if (modelID == null || withCommand == null) {
 	                	continue;
@@ -223,9 +296,14 @@ public class RelationalPlanner {
 		}
         PlanNode plan;
 		try {
-			plan = generatePlan(command, true);
+			plan = generatePlan(command);
 		} catch (TeiidProcessingException e) {
 			 throw new QueryPlannerException(e);
+		}
+		
+		if (plan.getType() == NodeConstants.Types.SOURCE) {
+			//this was effectively a rewrite
+			return (RelationalPlan)plan.getProperty(Info.PROCESSOR_PLAN);
 		}
 
 		if(debug) {
@@ -240,7 +318,6 @@ public class RelationalPlanner {
 
         // Build rule set based on hints
         RuleStack rules = buildRules();
-        context.setSourceHint(sourceHint);
         // Run rule-based optimizer
         plan = executeRules(rules, plan);
 
@@ -262,13 +339,19 @@ public class RelationalPlanner {
         	result.setWith(withList);
         }
         result.setOutputElements(topCols);
-        result.setSourceHint(sourceHint);
+        this.sourceHint = previous;
         return result;
     }
     
     private static void assignWithClause(RelationalNode node, Map<String, WithQueryCommand> pushdownWith, Set<GroupSymbol> groups) {
         if(node instanceof AccessNode) {
             AccessNode accessNode = (AccessNode) node;
+            Map<GroupSymbol, RelationalPlan> subplans = accessNode.getSubPlans();
+            if (subplans != null) {
+            	for (RelationalPlan subplan : subplans.values()) {
+    				assignWithClause(subplan.getRootNode(), pushdownWith, groups);
+            	}
+            }
             Command command = accessNode.getCommand();
             if (command instanceof QueryCommand) {
             	groups.clear();
@@ -278,6 +361,7 @@ public class RelationalPlanner {
             		WithQueryCommand clause = pushdownWith.get(groupSymbol.getNonCorrelationName());
             		if (clause != null) {
             			with.add(clause.clone());
+            			command.setSourceHint(SourceHint.combine(command.getSourceHint(), clause.getCommand().getSourceHint()));
             		}
 				}
             	if (!with.isEmpty()) {
@@ -436,7 +520,7 @@ public class RelationalPlanner {
      * @param groups List of groups (Strings) to be made dependent
      * @param plan The canonical plan
      */
-    private void distributeDependentHints(Collection<String> groups, PlanNode plan, NodeConstants.Info hintProperty)
+    private void distributeDependentHints(Collection<String> groups, PlanNode plan, NodeConstants.Info hintProperty, Collection<? extends Object> vals)
         throws QueryMetadataException, TeiidComponentException {
     
         if(groups == null || groups.isEmpty()) {
@@ -444,19 +528,20 @@ public class RelationalPlanner {
         }
         // Get all source nodes
         List<PlanNode> nodes = NodeEditor.findAllNodes(plan, NodeConstants.Types.SOURCE);
-
+        Iterator<? extends Object> valIter = vals.iterator();
         // Walk through each dependent group hint and
         // attach to the correct source node
         for (String groupName : groups) {
+        	Object val = valIter.next();
             // Walk through nodes and apply hint to all that match group name
-            boolean appliedHint = applyHint(nodes, groupName, hintProperty);
+            boolean appliedHint = applyHint(nodes, groupName, hintProperty, val);
 
             if(! appliedHint) {
                 //check if it is partial group name
                 Collection groupNames = metadata.getGroupsForPartialName(groupName);
                 if(groupNames.size() == 1) {
                     groupName = (String)groupNames.iterator().next();
-                    appliedHint = applyHint(nodes, groupName, hintProperty);
+                    appliedHint = applyHint(nodes, groupName, hintProperty, val);
                 }
                 
                 if(! appliedHint) {
@@ -469,7 +554,7 @@ public class RelationalPlanner {
         }
     }
     
-    private static boolean applyHint(List<PlanNode> nodes, String groupName, NodeConstants.Info hintProperty) {
+    private static boolean applyHint(List<PlanNode> nodes, String groupName, NodeConstants.Info hintProperty, Object value) {
         boolean appliedHint = false;
         for (PlanNode node : nodes) {
             GroupSymbol nodeGroup = node.getGroups().iterator().next();
@@ -478,7 +563,7 @@ public class RelationalPlanner {
             
             if (nodeGroup.getName().equalsIgnoreCase(groupName) 
              || (sDefinition != null && sDefinition.equalsIgnoreCase(groupName)) ) {
-                node.setProperty(hintProperty, Boolean.TRUE);
+                node.setProperty(hintProperty, value);
                 appliedHint = true;
             }
         }
@@ -516,6 +601,10 @@ public class RelationalPlanner {
         }
         if(hints.hasAggregates) {
             rules.push(new RulePushAggregates(idGenerator));
+            if (hints.hasJoin) {
+            	//we want to consider full pushdown prior to aggregate decomposition
+            	rules.push(new RuleChooseDependent(true));
+            }
         }
         if(hints.hasJoin) {
             rules.push(RuleConstants.CHOOSE_JOIN_STRATEGY);
@@ -567,7 +656,7 @@ public class RelationalPlanner {
         return rules;
     }
 
-    private PlanNode executeRules(RuleStack rules, PlanNode plan)
+    public PlanNode executeRules(RuleStack rules, PlanNode plan)
         throws QueryPlannerException, QueryMetadataException, TeiidComponentException {
 
         boolean debug = analysisRecord.recordDebug();
@@ -589,10 +678,7 @@ public class RelationalPlanner {
         return plan;
     }
 	
-	public PlanNode generatePlan(Command cmd, boolean useSourceHint) throws TeiidComponentException, TeiidProcessingException {
-    	if (useSourceHint && cmd.getSourceHint() != null && sourceHint == null) {
-			sourceHint = cmd.getSourceHint();
-    	}
+	public PlanNode generatePlan(Command cmd) throws TeiidComponentException, TeiidProcessingException {
 		//cascade the option clause nocache
 		Option savedOption = option;
 		option = cmd.getOption();
@@ -633,11 +719,11 @@ public class RelationalPlanner {
 		}
         // Distribute make dependent hints as necessary
         if (cmd.getOption() != null) {
-	        if(cmd.getOption().getDependentGroups() != null) {
-	            distributeDependentHints(cmd.getOption().getDependentGroups(), result, NodeConstants.Info.MAKE_DEP);
+	        if(cmd.getOption().getMakeDepOptions() != null) {
+	            distributeDependentHints(cmd.getOption().getDependentGroups(), result, NodeConstants.Info.MAKE_DEP, cmd.getOption().getMakeDepOptions());
 	        }
 	        if (cmd.getOption().getNotDependentGroups() != null) {
-	            distributeDependentHints(cmd.getOption().getNotDependentGroups(), result, NodeConstants.Info.MAKE_NOT_DEP);
+	            distributeDependentHints(cmd.getOption().getNotDependentGroups(), result, NodeConstants.Info.MAKE_NOT_DEP, Collections.nCopies(cmd.getOption().getNotDependentGroups().size(), Boolean.TRUE));
 	        }
         }
         this.option = savedOption;
@@ -673,7 +759,7 @@ public class RelationalPlanner {
         if(!usingTriggerAction && command instanceof Insert){
         	Insert insert = (Insert)command;
         	if (insert.getQueryExpression() != null) {
-	            PlanNode plan = generatePlan(insert.getQueryExpression(), true);
+	            PlanNode plan = generatePlan(insert.getQueryExpression());
 	            attachLast(sourceNode, plan);
 	            mergeTempMetadata(insert.getQueryExpression(), insert);
 	            projectNode.setProperty(NodeConstants.Info.INTO_GROUP, insert.getGroup());
@@ -682,7 +768,10 @@ public class RelationalPlanner {
 	            }
         	}
         }
-        
+        if (usingTriggerAction && FrameUtil.getNestedPlan(projectNode) instanceof RelationalPlan) {
+        	sourceNode.removeFromParent();
+        	return sourceNode;
+        }
         return projectNode;
 	}
 
@@ -864,16 +953,14 @@ public class RelationalPlanner {
         } else {
             hints.hasSetQuery = true;
             SetQuery query = (SetQuery)command;
-            boolean hasSourceHint = sourceHint != null;
+            SourceHint previous = this.sourceHint;
+            this.sourceHint = SourceHint.combine(previous, query.getProjectedQuery().getSourceHint());
             PlanNode leftPlan = createQueryPlan( query.getLeftQuery());
             PlanNode rightPlan = createQueryPlan( query.getRightQuery());
-            if (!hasSourceHint) {
-            	sourceHint = null;
-            }
             node = NodeFactory.getNewNode(NodeConstants.Types.SET_OP);
             node.setProperty(NodeConstants.Info.SET_OPERATION, query.getOperation());
             node.setProperty(NodeConstants.Info.USE_ALL, query.isAll());
-            
+            this.sourceHint = previous;
             attachLast(node, leftPlan);
             attachLast(node, rightPlan);
         }
@@ -981,7 +1068,7 @@ public class RelationalPlanner {
      * @throws QueryMetadataException 
      * @throws TeiidProcessingException 
      */
-    void buildTree(FromClause clause, PlanNode parent)
+    void buildTree(FromClause clause, final PlanNode parent)
         throws QueryMetadataException, TeiidComponentException, TeiidProcessingException {
         
         PlanNode node = null;
@@ -1022,10 +1109,14 @@ public class RelationalPlanner {
             	if (info != null && info.getPartitionInfo() != null && !info.getPartitionInfo().isEmpty()) {
             		node.setProperty(NodeConstants.Info.PARTITION_INFO, info.getPartitionInfo());
             	}
-            	if (parent.getType() != NodeConstants.Types.JOIN && nestedCommand.getSourceHint() != null && sourceHint == null) {
-        			sourceHint = nestedCommand.getSourceHint();
+            	SourceHint previous = this.sourceHint;
+            	if (nestedCommand.getSourceHint() != null) {
+            		this.sourceHint = SourceHint.combine(previous, nestedCommand.getSourceHint());
             	}
             	addNestedCommand(node, group, nestedCommand, nestedCommand, true, true);
+            	this.sourceHint = previous;
+            } else if (this.sourceHint != null) {
+            	node.setProperty(Info.SOURCE_HINT, this.sourceHint);
             }
             parent.addLastChild(node);
         } else if(clause instanceof JoinPredicate) {
@@ -1067,8 +1158,13 @@ public class RelationalPlanner {
             if (sfc.isNoUnnest()) {
             	node.setProperty(Info.NO_UNNEST, Boolean.TRUE);
             }
+            SourceHint previous = this.sourceHint;
+        	if (nestedCommand.getSourceHint() != null) {
+        		this.sourceHint = SourceHint.combine(previous, nestedCommand.getSourceHint());
+        	}
             node.addGroup(group);
             addNestedCommand(node, group, nestedCommand, nestedCommand, true, false);
+        	this.sourceHint = previous;
 			if (nestedCommand instanceof SetQuery) {
 				Map<ElementSymbol, List<Set<Constant>>> partitionInfo = PartitionAnalyzer.extractPartionInfo((SetQuery)nestedCommand, ResolverUtil.resolveElementsInGroup(group, metadata));
 				if (!partitionInfo.isEmpty()) {
@@ -1080,6 +1176,57 @@ public class RelationalPlanner {
         } else if (clause instanceof TableFunctionReference) {
         	TableFunctionReference tt = (TableFunctionReference)clause;
             GroupSymbol group = tt.getGroupSymbol();
+            //special handling to convert array table into a mergable construct
+            if (parent.getType() == NodeConstants.Types.JOIN && tt instanceof ArrayTable) {
+            	JoinType jt = (JoinType) parent.getProperty(Info.JOIN_TYPE);
+            	if (jt != JoinType.JOIN_FULL_OUTER && parent.getChildCount() > 0) {
+	            	ArrayTable at = (ArrayTable)tt;
+		        	//rewrite if deterministic and free of subqueries
+		        	if (FunctionCollectorVisitor.isNonDeterministic(at.getArrayValue())
+		        			|| ValueIteratorProviderCollectorVisitor.getValueIteratorProviders(at).isEmpty()) {
+		            	List<ElementSymbol> symbols = at.getProjectedSymbols();
+		        		FunctionLibrary funcLib = this.metadata.getFunctionLibrary();
+		                FunctionDescriptor descriptor = funcLib.findFunction(IFunctionLibrary.FunctionName.ARRAY_GET, 
+		                		new Class[] { DataTypeManager.DefaultDataClasses.OBJECT, DataTypeManager.DefaultDataClasses.INTEGER });
+		                Query query = new Query();
+		                Select select = new Select();
+		                query.setSelect(select);
+		            	for (int i = 0; i < symbols.size(); i++) {
+		            		ElementSymbol es = symbols.get(i);
+		            		Function f = new Function(IFunctionLibrary.FunctionName.ARRAY_GET.text(), new Expression[] {(Expression) at.getArrayValue().clone(), new Constant(i + 1)});
+		            		f.setType(DataTypeManager.DefaultDataClasses.OBJECT);
+		                    f.setFunctionDescriptor(descriptor);
+		                    Expression ex = f;
+		            		if (es.getType() != DataTypeManager.DefaultDataClasses.OBJECT) {
+		            			ex = ResolverUtil.getConversion(ex, DataTypeManager.DefaultDataTypes.OBJECT, DataTypeManager.getDataTypeName(es.getType()), false, metadata.getFunctionLibrary());
+		            		}
+		            		select.addSymbol(new AliasSymbol(es.getShortName(), ex));
+		            	}
+		            	SubqueryFromClause sfc = new SubqueryFromClause(at.getGroupSymbol(), query);
+		            	sfc.setTable(true);
+		            	buildTree(sfc, parent);
+		            	if (!jt.isOuter()) {
+		            		//insert is null criteria
+		            		IsNullCriteria criteria = new IsNullCriteria((Expression) at.getArrayValue().clone());
+		            		if (sfc.getCommand().getCorrelatedReferences() != null) {
+			            		RuleMergeCriteria.ReferenceReplacementVisitor rrv = new RuleMergeCriteria.ReferenceReplacementVisitor(sfc.getCommand().getCorrelatedReferences());
+			            		PreOrPostOrderNavigator.doVisit(criteria, rrv, PreOrPostOrderNavigator.PRE_ORDER);
+		            		}
+			            	criteria.setNegated(true);
+			            	if (jt == JoinType.JOIN_CROSS) {
+			            		parent.setProperty(NodeConstants.Info.JOIN_TYPE, JoinType.JOIN_INNER);
+			            	}
+			            	List<Criteria> joinCriteria = (List<Criteria>) parent.getProperty(Info.JOIN_CRITERIA); 
+			            	if (joinCriteria == null) {
+			            		joinCriteria = new ArrayList<Criteria>(2);
+			            	}
+			            	joinCriteria.add(criteria);
+			                parent.setProperty(NodeConstants.Info.JOIN_CRITERIA, joinCriteria);
+		            	}
+		            	return;
+		        	}
+            	}
+            }
             node = NodeFactory.getNewNode(NodeConstants.Types.SOURCE);
             node.setProperty(NodeConstants.Info.TABLE_FUNCTION, tt);
             tt.setCorrelatedReferences(getCorrelatedReferences(parent, node, tt));
@@ -1094,8 +1241,8 @@ public class RelationalPlanner {
             hints.hasOptionalJoin = true;
         }
         
-        if (clause.isMakeDep()) {
-            node.setProperty(NodeConstants.Info.MAKE_DEP, Boolean.TRUE);
+        if (clause.getMakeDep() != null) {
+            node.setProperty(NodeConstants.Info.MAKE_DEP, clause.getMakeDep());
         } else if (clause.isMakeNotDep()) {
             node.setProperty(NodeConstants.Info.MAKE_NOT_DEP, Boolean.TRUE);
         }
@@ -1106,18 +1253,30 @@ public class RelationalPlanner {
 
 	public static Object getTrackableGroup(GroupSymbol group, QueryMetadataInterface metadata)
 			throws TeiidComponentException, QueryMetadataException {
+		Object metadataID = group.getMetadataID();
 		if (group.isTempGroupSymbol()) {
 			QueryMetadataInterface qmi = metadata.getSessionMetadata();
 			try {
 				//exclude proc scoped temp tables
-				if (group.isGlobalTable() || (qmi != null && qmi.getGroupID(group.getNonCorrelationName()) == group.getMetadataID())) {
-					return group.getMetadataID();
+				if (group.isGlobalTable()) {
+					return metadataID;
+				}
+				if (qmi != null) {
+					Object mid = qmi.getGroupID(group.getNonCorrelationName());
+					if (mid == metadataID || metadata.isVirtualGroup(metadataID)) {
+						//global temp should use the session metadata reference instead
+						return mid;
+					}
 				}
 			} catch (QueryMetadataException e) {
 				//not a session table
 			}
+			if (metadata.isVirtualGroup(metadataID)) {
+				//global temp table
+				return metadataID;
+			}
 		} else {
-			return group.getMetadataID();
+			return metadataID;
 		}
 		return null;
 	}
@@ -1170,7 +1329,7 @@ public class RelationalPlanner {
 	
 			if (merge) {
 				mergeTempMetadata(nestedCommand, parentCommand);
-			    PlanNode childRoot = generatePlan(nestedCommand, false);
+			    PlanNode childRoot = generatePlan(nestedCommand);
 			    node.addFirstChild(childRoot);
 				List<Expression> projectCols = nestedCommand.getProjectedSymbols();
 				SymbolMap map = SymbolMap.createSymbolMap(group, projectCols, metadata);
@@ -1275,11 +1434,13 @@ public class RelationalPlanner {
 		
 		GroupBy groupBy = query.getGroupBy();
 		List<Expression> groupingCols = null;
+		PlanNode groupNode = NodeFactory.getNewNode(NodeConstants.Types.GROUP);
 		if (groupBy != null) {
 			groupingCols = groupBy.getSymbols();
+			if (groupBy.isRollup()) {
+				groupNode.setProperty(Info.ROLLUP, Boolean.TRUE);				
+			}
 		}
-		
-		PlanNode groupNode = NodeFactory.getNewNode(NodeConstants.Types.GROUP);
 		
 		Map<Expression, ElementSymbol> mapping = buildGroupingNode(aggs, groupingCols, groupNode, this.context, this.idGenerator).inserseMapping();
 
@@ -1485,7 +1646,8 @@ public class RelationalPlanner {
         		for (ElementSymbol el : ResolverUtil.resolveElementsInGroup(virtualGroup, metadata)) {
         			symbols.add(new ElementSymbol(el.getShortName()));
         		}
-        		Query query = createMatViewQuery(matMetadataId, matTableName, symbols, isImplicitGlobal);
+
+        		Query query = createMatViewQuery(metadataID, matMetadataId, matTableName, symbols, isImplicitGlobal);
         		query.setCacheHint(hint);
         		qnode.setCommand(query);
                 cacheString = "matview"; //$NON-NLS-1$
@@ -1508,8 +1670,70 @@ public class RelationalPlanner {
 		gs.setMetadataID(matMetadataId);
 		query.setFrom(new From(Arrays.asList(new UnaryFromClause(gs))));
 		return query;
+	}    
+	
+	public Query createMatViewQuery(Object viewMatadataId, Object matMetadataId, String matTableName, List<? extends Expression> select, boolean isGlobal) throws QueryMetadataException, TeiidComponentException {
+		Query query = new Query();
+		query.setSelect(new Select(select));
+		GroupSymbol gs = new GroupSymbol(matTableName);
+		gs.setGlobalTable(isGlobal);
+		gs.setMetadataID(matMetadataId);
+		query.setFrom(new From(Arrays.asList(new UnaryFromClause(gs))));
+		
+		boolean allow = false;
+		if (!(viewMatadataId instanceof TempMetadataID)) {
+			allow = Boolean.parseBoolean(metadata.getExtensionProperty(viewMatadataId, MaterializationMetadataRepository.ALLOW_MATVIEW_MANAGEMENT, false));
+		}
+		if (allow) {
+			String statusTableName = metadata.getExtensionProperty(viewMatadataId, MaterializationMetadataRepository.MATVIEW_STATUS_TABLE, false);
+			String scope = metadata.getExtensionProperty(viewMatadataId, MaterializationMetadataRepository.MATVIEW_SHARE_SCOPE, false);
+			if (scope == null) {
+				scope = MaterializationMetadataRepository.Scope.NONE.name();
+			}
+			Expression expr1 = new ElementSymbol("SchemaName"); //$NON-NLS-1$
+			Expression expr2 = new ElementSymbol("Name"); //$NON-NLS-1$
+			Expression expr3 = new ElementSymbol("Valid"); //$NON-NLS-1$
+			Expression expr4 = new ElementSymbol("LoadState"); //$NON-NLS-1$
+			String onErrorAction = metadata.getExtensionProperty(viewMatadataId, MaterializationMetadataRepository.MATVIEW_ONERROR_ACTION, false);
+			
+			if (onErrorAction == null || !ErrorAction.IGNORE.name().equalsIgnoreCase(onErrorAction)) {
+				Query subquery = new Query();
+				Select subSelect = new Select();
+		        subSelect.addSymbol(new Function("mvstatus", new Expression[] {expr1, expr2, expr3, expr4, new Constant(onErrorAction)})); //$NON-NLS-1$ 
+		        subquery.setSelect(subSelect);
+				GroupSymbol statusTable = new GroupSymbol(statusTableName);
+				statusTable.setGlobalTable(false);
+				Query one = new Query();
+				Select s = new Select();
+				s.addSymbol(new Constant(1));
+				one.setSelect(s);
+				subquery.setFrom(new From(Arrays.asList(new JoinPredicate(new SubqueryFromClause("x", one), new UnaryFromClause(statusTable), JoinType.JOIN_LEFT_OUTER, QueryRewriter.TRUE_CRITERIA)))); //$NON-NLS-1$
+				
+				String schemaName = metadata.getName(metadata.getModelID(viewMatadataId));
+				String viewName = metadata.getName(viewMatadataId);
+				
+				CompoundCriteria cc  = null;
+		        CompareCriteria c1 = new CompareCriteria(new ElementSymbol("VDBName"), CompareCriteria.EQ, new Constant(context.getVdbName())); //$NON-NLS-1$
+		        CompareCriteria c2 = new CompareCriteria(new ElementSymbol("VDBVersion"), CompareCriteria.EQ, new Constant(context.getVdbVersion())); //$NON-NLS-1$
+		        CompareCriteria c3 = new CompareCriteria(new ElementSymbol("SchemaName"), CompareCriteria.EQ, new Constant(schemaName)); //$NON-NLS-1$
+		        CompareCriteria c4 = new CompareCriteria(new ElementSymbol("Name"), CompareCriteria.EQ, new Constant(viewName)); //$NON-NLS-1$
+				
+		        if (scope.equalsIgnoreCase(MaterializationMetadataRepository.Scope.NONE.name())) { 
+			        cc = new CompoundCriteria(CompoundCriteria.AND, Arrays.asList(c1, c2, c3, c4));
+				}
+				else if (scope.equalsIgnoreCase(MaterializationMetadataRepository.Scope.VDB.name())) {
+					cc = new CompoundCriteria(CompoundCriteria.AND, Arrays.asList(c1, c3, c4));
+				}
+				else if (scope.equalsIgnoreCase(MaterializationMetadataRepository.Scope.SCHEMA.name())) { 
+					cc = new CompoundCriteria(CompoundCriteria.AND, Arrays.asList(c3, c4));
+				}			
+		        subquery.setCriteria(cc);
+				query.setCriteria(new ExistsCriteria(subquery));
+			}
+		}
+		return query;
 	}
-
+	
     public static boolean isNoCacheGroup(QueryMetadataInterface metadata,
                                           Object metadataID,
                                           Option option) throws QueryMetadataException,

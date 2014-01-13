@@ -88,6 +88,7 @@ import org.teiid.query.sql.visitor.ValueIteratorProviderCollectorVisitor;
 import org.teiid.query.util.CommandContext;
 import org.teiid.query.validator.UpdateValidator.UpdateInfo;
 import org.teiid.query.validator.UpdateValidator.UpdateMapping;
+import org.teiid.query.validator.ValidationVisitor;
 import org.teiid.translator.SourceSystemFunctions;
 
 
@@ -639,17 +640,15 @@ public class QueryRewriter {
         for (int i = 0; i < orderBy.getVariableCount(); i++) {
         	Expression querySymbol = orderBy.getVariable(i);
         	int index = orderBy.getExpressionPosition(i);
-    		boolean isUnrelated = false;
         	if (index == -1) {
     			unrelatedItems.add(orderBy.getOrderByItems().get(i));
-    			isUnrelated = (querySymbol instanceof ExpressionSymbol);
         	} else {
         		querySymbol = (Expression)projectedSymbols.get(index);
         	}
         	Expression expr = SymbolMap.getExpression(querySymbol);
         	if (!previousExpressions.add(expr) || (queryCommand instanceof Query && EvaluatableVisitor.willBecomeConstant(expr))) {
                 orderBy.removeOrderByItem(i--);
-        	} else if (!isUnrelated) {
+        	} else {
         		orderBy.getOrderByItems().get(i).setSymbol((Expression)querySymbol.clone());
         	}
         }
@@ -760,8 +759,8 @@ public class QueryRewriter {
 		if(joinCrits != null && joinCrits.size() > 0) {
 			//rewrite join crits by rewriting a compound criteria
 			Criteria criteria = new CompoundCriteria(new ArrayList(joinCrits));
-            joinCrits.clear();
             criteria = rewriteCriteria(criteria);
+            joinCrits.clear();
             if (criteria instanceof CompoundCriteria && ((CompoundCriteria)criteria).getOperator() == CompoundCriteria.AND) {
                 joinCrits.addAll(((CompoundCriteria)criteria).getCriteria());
             } else {
@@ -1413,7 +1412,9 @@ public class QueryRewriter {
                 Object result = descriptor.invokeFunction(new Object[] { const2.getValue(), const1.getValue() }, null, this.context );
                 combinedConst = new Constant(result, descriptor.getReturnType());
             } catch(FunctionExecutionException e) {
-            	 throw new QueryValidatorException(QueryPlugin.Event.TEIID30373, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30373, e.getMessage()));
+            	throw new QueryValidatorException(QueryPlugin.Event.TEIID30373, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30373, e.getMessage()));
+        	} catch (BlockedException e) {
+        		throw new QueryValidatorException(QueryPlugin.Event.TEIID30373, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30373, e.getMessage()));        		
         	}
         } else {
             Function conversion = new Function(descriptor.getName(), new Expression[] { rightExpr, const1 });
@@ -1653,6 +1654,8 @@ public class QueryRewriter {
     	} catch(FunctionExecutionException e) {
             //Not all numeric formats are invertable, so just return the criteria as it may still be valid
             return crit;
+        } catch (BlockedException e) {
+        	return crit;
         }
         //parseFunctions are all potentially narrowing
         if (!isFormat) {
@@ -2991,13 +2994,25 @@ public class QueryRewriter {
     
     private Limit rewriteLimitClause(Limit limit) throws TeiidComponentException, TeiidProcessingException{
         if (limit.getOffset() != null) {
-            limit.setOffset(rewriteExpressionDirect(limit.getOffset()));
-            if (new Constant(0).equals(limit.getOffset())) {
+        	if (!processing) {
+	            limit.setOffset(rewriteExpressionDirect(limit.getOffset()));
+        	} else {
+        		Constant c = evaluate(limit.getOffset(), false);
+        		limit.setOffset(c);
+        		ValidationVisitor.LIMIT_CONSTRAINT.validate(c.getValue());
+        	}
+            if (ZERO_CONSTANT.equals(limit.getOffset())) {
             	limit.setOffset(null);
             }
         }
         if (limit.getRowLimit() != null) {
-            limit.setRowLimit(rewriteExpressionDirect(limit.getRowLimit()));
+        	if (!processing) {
+	            limit.setRowLimit(rewriteExpressionDirect(limit.getRowLimit()));
+        	} else {
+        		Constant c = evaluate(limit.getRowLimit(), false);
+        		limit.setRowLimit(c);
+        		ValidationVisitor.LIMIT_CONSTRAINT.validate(c.getValue());
+        	}
         }
         return limit;
     }

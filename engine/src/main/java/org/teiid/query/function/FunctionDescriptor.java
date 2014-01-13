@@ -29,6 +29,7 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 
 import org.teiid.api.exception.query.FunctionExecutionException;
+import org.teiid.common.buffer.BlockedException;
 import org.teiid.core.CoreConstants;
 import org.teiid.core.TeiidRuntimeException;
 import org.teiid.core.types.ArrayImpl;
@@ -60,7 +61,6 @@ public class FunctionDescriptor implements Serializable, Cloneable, IFunctionDes
     private boolean requiresContext;
     private FunctionMethod method;
     private String schema; //TODO: remove me - we need to create a proper schema for udf and system functions
-    private Object metadataID;
     private boolean hasWrappedArgs;
     private boolean calledWithVarArgArrayParam; //TODO: could store this on the function and pass to invoke
     
@@ -183,21 +183,6 @@ public class FunctionDescriptor implements Serializable, Cloneable, IFunctionDes
         this.returnType = returnType;
     }
 
-	public Object getMetadataID() {
-		return this.metadataID;
-	}
-
-	public void setMetadataID(Object metadataID) {
-		this.metadataID = metadataID;
-	}
-	
-	public void checkNotPushdown() throws FunctionExecutionException {
-	    // Check for function we can't evaluate
-	    if(getPushdown() == PushDown.MUST_PUSHDOWN) {
-	         throw new FunctionExecutionException(QueryPlugin.Event.TEIID30341, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30341, getFullName()));
-	    }
-	}
-
 	/**
 	 * Invoke the function described in the function descriptor, using the
 	 * values provided.  Return the result of the function.
@@ -208,7 +193,7 @@ public class FunctionDescriptor implements Serializable, Cloneable, IFunctionDes
 	 * @param fd Function descriptor describing the name and types of the arguments
 	 * @return Result of invoking the function
 	 */
-	public Object invokeFunction(Object[] values, CommandContext context, Object functionTarget) throws FunctionExecutionException {
+	public Object invokeFunction(Object[] values, CommandContext context, Object functionTarget) throws FunctionExecutionException, BlockedException {
         if (!isNullDependent()) {
         	for (int i = requiresContext?1:0; i < values.length; i++) {
 				if (values[i] == null) {
@@ -281,9 +266,12 @@ public class FunctionDescriptor implements Serializable, Cloneable, IFunctionDes
             }
             return importValue(result, getReturnType());
         } catch(ArithmeticException e) {
-    		 throw new FunctionExecutionException(QueryPlugin.Event.TEIID30384, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30384, getFullName()));
+    		 throw new FunctionExecutionException(QueryPlugin.Event.TEIID30384, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30384, getFullName(), e.getMessage()));
         } catch(InvocationTargetException e) {
-             throw new FunctionExecutionException(QueryPlugin.Event.TEIID30384, e.getTargetException(), QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30384, getFullName()));
+        	 if (e.getTargetException() instanceof BlockedException) {
+        		 throw (BlockedException)e.getTargetException();
+        	 }
+             throw new FunctionExecutionException(QueryPlugin.Event.TEIID30384, e.getTargetException(), QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30384, getFullName(), e.getMessage()));
         } catch(IllegalAccessException e) {
              throw new FunctionExecutionException(QueryPlugin.Event.TEIID30385, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30385, method.toString()));
         } catch (TransformationException e) {

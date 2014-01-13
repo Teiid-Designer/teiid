@@ -45,16 +45,10 @@ import org.teiid.query.resolver.util.ResolverVisitor;
 import org.teiid.query.sql.LanguageObject;
 import org.teiid.query.sql.lang.*;
 import org.teiid.query.sql.navigator.PostOrderNavigator;
-import org.teiid.query.sql.symbol.AliasSymbol;
-import org.teiid.query.sql.symbol.ElementSymbol;
-import org.teiid.query.sql.symbol.Expression;
-import org.teiid.query.sql.symbol.ExpressionSymbol;
-import org.teiid.query.sql.symbol.GroupSymbol;
-import org.teiid.query.sql.symbol.MultipleElementSymbol;
-import org.teiid.query.sql.symbol.Reference;
-import org.teiid.query.sql.symbol.ScalarSubquery;
-import org.teiid.query.sql.symbol.Symbol;
+import org.teiid.query.sql.navigator.PreOrPostOrderNavigator;
+import org.teiid.query.sql.symbol.*;
 import org.teiid.query.sql.visitor.ElementCollectorVisitor;
+import org.teiid.query.sql.visitor.ExpressionMappingVisitor;
 
 public class SimpleQueryResolver implements CommandResolver {
 
@@ -73,6 +67,21 @@ public class SimpleQueryResolver implements CommandResolver {
             qrv.visit(query);
             ResolverVisitor visitor = (ResolverVisitor)qrv.getVisitor();
 			visitor.throwException(true);
+			if (visitor.hasUserDefinedAggregate()) {
+				ExpressionMappingVisitor emv = new ExpressionMappingVisitor(null) {
+					public Expression replaceExpression(Expression element) {
+						if (element instanceof Function && !(element instanceof AggregateSymbol) && ((Function) element).isAggregate()) {
+							Function f = (Function)element;
+							AggregateSymbol as = new AggregateSymbol(f.getName(), false, f.getArgs(), null);
+							as.setType(f.getType());
+							as.setFunctionDescriptor(f.getFunctionDescriptor());
+							return as;
+						}
+						return element;
+					}
+				};
+				PreOrPostOrderNavigator.doVisit(query, emv, PreOrPostOrderNavigator.POST_ORDER);
+			}
         } catch (TeiidRuntimeException e) {
             if (e.getCause() instanceof QueryMetadataException) {
                 throw (QueryMetadataException)e.getCause();
@@ -163,7 +172,6 @@ public class SimpleQueryResolver implements CommandResolver {
         }
         GroupSymbol gs = allInGroupSymbol.getGroup();
         allInGroupSymbol.setGroup(groupSymbols.get(0).clone());
-        allInGroupSymbol.getGroup().setOutputName(gs.getOutputName());
         return groupSymbols.get(0);
     }
     
@@ -203,7 +211,8 @@ public class SimpleQueryResolver implements CommandResolver {
             visitNode(obj.getCriteria());
             visitNode(obj.getGroupBy());
             visitNode(obj.getHaving());
-            visitNode(obj.getSelect());        
+            visitNode(obj.getSelect()); 
+            visitNode(obj.getLimit());
         }
         
         public void visit(GroupSymbol obj) {
@@ -571,6 +580,27 @@ public class SimpleQueryResolver implements CommandResolver {
 				checkImplicit(jp.getLeftClause());
 				if (allowImplicit) {
 					checkImplicit(jp.getRightClause());
+				}
+			}
+		}
+		
+		@Override
+		public void visit(Limit obj) {
+			super.visit(obj);
+			if (obj.getOffset() != null) {
+				ResolverUtil.setTypeIfNull(obj.getOffset(), DataTypeManager.DefaultDataClasses.INTEGER);
+				try {
+					obj.setOffset(ResolverUtil.convertExpression(obj.getOffset(), DataTypeManager.DefaultDataTypes.INTEGER, metadata));
+				} catch (QueryResolverException e) {
+					throw new TeiidRuntimeException(e);
+				}
+			}
+			if (obj.getRowLimit() != null) {
+				ResolverUtil.setTypeIfNull(obj.getRowLimit(), DataTypeManager.DefaultDataClasses.INTEGER);
+				try {
+					obj.setRowLimit(ResolverUtil.convertExpression(obj.getRowLimit(), DataTypeManager.DefaultDataTypes.INTEGER, metadata));
+				} catch (QueryResolverException e) {
+					throw new TeiidRuntimeException(e);
 				}
 			}
 		}

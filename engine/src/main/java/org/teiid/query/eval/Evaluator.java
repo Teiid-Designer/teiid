@@ -39,28 +39,36 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
 import javax.xml.transform.stream.StreamResult;
-
 import net.sf.saxon.om.NodeInfo;
 import net.sf.saxon.query.QueryResult;
 import net.sf.saxon.trans.XPathException;
-
 import org.teiid.api.exception.query.ExpressionEvaluationException;
 import org.teiid.api.exception.query.FunctionExecutionException;
+import org.teiid.api.exception.query.QueryValidatorException;
 import org.teiid.client.SourceWarning;
 import org.teiid.common.buffer.BlockedException;
 import org.teiid.core.ComponentNotFoundException;
 import org.teiid.core.TeiidComponentException;
 import org.teiid.core.TeiidProcessingException;
 import org.teiid.core.TeiidRuntimeException;
-import org.teiid.core.types.*;
+import org.teiid.core.types.ArrayImpl;
+import org.teiid.core.types.BaseLob;
+import org.teiid.core.types.BlobType;
+import org.teiid.core.types.ClobType;
+import org.teiid.core.types.InputStreamFactory;
+import org.teiid.core.types.SQLXMLImpl;
+import org.teiid.core.types.Sequencable;
+import org.teiid.core.types.Streamable;
+import org.teiid.core.types.TransformationException;
+import org.teiid.core.types.XMLType;
 import org.teiid.core.types.XMLType.Type;
 import org.teiid.core.types.basic.StringToSQLXMLTransform;
 import org.teiid.core.util.EquivalenceUtil;
 import org.teiid.designer.query.sql.lang.IMatchCriteria.MatchMode;
 import org.teiid.designer.udf.IFunctionLibrary;
 import org.teiid.jdbc.TeiidSQLException;
+import org.teiid.metadata.FunctionMethod.PushDown;
 import org.teiid.query.QueryPlugin;
 import org.teiid.query.function.FunctionDescriptor;
 import org.teiid.query.function.JSONFunctionMethods.JSONBuilder;
@@ -68,10 +76,45 @@ import org.teiid.query.function.source.XMLSystemFunctions;
 import org.teiid.query.function.source.XMLSystemFunctions.XmlConcat;
 import org.teiid.query.processor.ProcessorDataManager;
 import org.teiid.query.sql.LanguageObject;
-import org.teiid.query.sql.lang.*;
+import org.teiid.query.sql.lang.AbstractCompareCriteria;
+import org.teiid.query.sql.lang.AbstractSetCriteria;
+import org.teiid.query.sql.lang.CollectionValueIterator;
+import org.teiid.query.sql.lang.CompareCriteria;
+import org.teiid.query.sql.lang.CompoundCriteria;
+import org.teiid.query.sql.lang.Criteria;
+import org.teiid.query.sql.lang.DependentSetCriteria;
+import org.teiid.query.sql.lang.ExistsCriteria;
+import org.teiid.query.sql.lang.ExpressionCriteria;
+import org.teiid.query.sql.lang.IsNullCriteria;
+import org.teiid.query.sql.lang.MatchCriteria;
+import org.teiid.query.sql.lang.NotCriteria;
+import org.teiid.query.sql.lang.SetCriteria;
+import org.teiid.query.sql.lang.SubqueryCompareCriteria;
+import org.teiid.query.sql.lang.SubqueryContainer;
+import org.teiid.query.sql.lang.SubquerySetCriteria;
 import org.teiid.query.sql.proc.ExceptionExpression;
-import org.teiid.query.sql.symbol.*;
+import org.teiid.query.sql.symbol.Array;
+import org.teiid.query.sql.symbol.CaseExpression;
+import org.teiid.query.sql.symbol.Constant;
+import org.teiid.query.sql.symbol.DerivedColumn;
+import org.teiid.query.sql.symbol.DerivedExpression;
+import org.teiid.query.sql.symbol.ElementSymbol;
+import org.teiid.query.sql.symbol.Expression;
+import org.teiid.query.sql.symbol.ExpressionSymbol;
+import org.teiid.query.sql.symbol.Function;
+import org.teiid.query.sql.symbol.JSONObject;
+import org.teiid.query.sql.symbol.QueryString;
+import org.teiid.query.sql.symbol.Reference;
+import org.teiid.query.sql.symbol.ScalarSubquery;
+import org.teiid.query.sql.symbol.SearchedCaseExpression;
+import org.teiid.query.sql.symbol.TextLine;
+import org.teiid.query.sql.symbol.XMLElement;
+import org.teiid.query.sql.symbol.XMLForest;
+import org.teiid.query.sql.symbol.XMLNamespaces;
 import org.teiid.query.sql.symbol.XMLNamespaces.NamespaceItem;
+import org.teiid.query.sql.symbol.XMLParse;
+import org.teiid.query.sql.symbol.XMLQuery;
+import org.teiid.query.sql.symbol.XMLSerialize;
 import org.teiid.query.sql.util.ValueIterator;
 import org.teiid.query.sql.util.ValueIteratorSource;
 import org.teiid.query.sql.util.VariableContext;
@@ -207,6 +250,12 @@ public class Evaluator {
     public Boolean evaluateTVL(Criteria criteria, List<?> tuple)
         throws ExpressionEvaluationException, BlockedException, TeiidComponentException {
     	
+		return internalEvaluateTVL(criteria, tuple);
+	}
+
+	private Boolean internalEvaluateTVL(Criteria criteria, List<?> tuple)
+			throws ExpressionEvaluationException, BlockedException,
+			TeiidComponentException {
 		if(criteria instanceof CompoundCriteria) {
 			return evaluate((CompoundCriteria)criteria, tuple);
 		} else if(criteria instanceof NotCriteria) {
@@ -230,7 +279,7 @@ public class Evaluator {
 		}
 	}
 
-	public Boolean evaluate(CompoundCriteria criteria, List<?> tuple)
+	private Boolean evaluate(CompoundCriteria criteria, List<?> tuple)
 		throws ExpressionEvaluationException, BlockedException, TeiidComponentException {
 
 		List<Criteria> subCrits = criteria.getCriteria();
@@ -238,7 +287,7 @@ public class Evaluator {
         Boolean result = and?Boolean.TRUE:Boolean.FALSE;
 		for (int i = 0; i < subCrits.size(); i++) {
 			Criteria subCrit = subCrits.get(i);
-			Boolean value = evaluateTVL(subCrit, tuple);
+			Boolean value = internalEvaluateTVL(subCrit, tuple);
             if (value == null) {
 				result = null;
 			} else if (!value.booleanValue()) {
@@ -252,11 +301,11 @@ public class Evaluator {
 		return result;
 	}
 
-	public Boolean evaluate(NotCriteria criteria, List<?> tuple)
+	private Boolean evaluate(NotCriteria criteria, List<?> tuple)
 		throws ExpressionEvaluationException, BlockedException, TeiidComponentException {
 
 		Criteria subCrit = criteria.getCriteria();
-		Boolean result = evaluateTVL(subCrit, tuple);
+		Boolean result = internalEvaluateTVL(subCrit, tuple);
         if (result == null) {
             return null;
         }
@@ -266,7 +315,7 @@ public class Evaluator {
         return Boolean.TRUE;
 	}
 
-	public Boolean evaluate(CompareCriteria criteria, List<?> tuple)
+	private Boolean evaluate(CompareCriteria criteria, List<?> tuple)
 		throws ExpressionEvaluationException, BlockedException, TeiidComponentException {
 
 		// Evaluate left expression
@@ -299,7 +348,7 @@ public class Evaluator {
 		return compare(criteria, leftValue, rightValue);
 	}
 
-	public Boolean evaluate(MatchCriteria criteria, List<?> tuple)
+	private Boolean evaluate(MatchCriteria criteria, List<?> tuple)
 		throws ExpressionEvaluationException, BlockedException, TeiidComponentException {
 
         boolean result = false;
@@ -463,7 +512,7 @@ public class Evaluator {
         return Boolean.valueOf(criteria.isNegated());
 	}
 
-	public boolean evaluate(IsNullCriteria criteria, List<?> tuple)
+	private boolean evaluate(IsNullCriteria criteria, List<?> tuple)
 		throws ExpressionEvaluationException, BlockedException, TeiidComponentException {
 
 		// Evaluate expression
@@ -584,7 +633,7 @@ public class Evaluator {
 		return result;
 	}
 
-    public boolean evaluate(ExistsCriteria criteria, List<?> tuple)
+    private boolean evaluate(ExistsCriteria criteria, List<?> tuple)
         throws BlockedException, TeiidComponentException, ExpressionEvaluationException {
 
         ValueIterator valueIter;
@@ -609,7 +658,7 @@ public class Evaluator {
 	    }
 	}
 	
-	private Object internalEvaluate(Expression expression, List<?> tuple)
+	protected Object internalEvaluate(Expression expression, List<?> tuple)
 	   throws ExpressionEvaluationException, BlockedException, TeiidComponentException {
 	
 	   if(expression instanceof DerivedExpression) {
@@ -643,7 +692,15 @@ public class Evaluator {
 		   if (ref.isPositional() && ref.getExpression() == null) {
 			   return getContext(ref).getVariableContext().getGlobalValue(ref.getContextSymbol());
 		   }
-		   return internalEvaluate(ref.getExpression(), tuple);
+		   Object result = internalEvaluate(ref.getExpression(), tuple);
+		   if (ref.getConstraint() != null) {
+			   try {
+				   ref.getConstraint().validate(result);
+			   } catch (QueryValidatorException e) {
+				   throw new ExpressionEvaluationException(e);
+			   }
+		   }
+		   return result;
 	   } else if(expression instanceof Criteria) {
 	       return evaluate((Criteria) expression, tuple);
 	   } else if(expression instanceof ScalarSubquery) {
@@ -671,7 +728,11 @@ public class Evaluator {
 		   List<Expression> exprs = array.getExpressions();
 		   Object[] result = (Object[]) java.lang.reflect.Array.newInstance(array.getComponentType(), exprs.size());
 		   for (int i = 0; i < exprs.size(); i++) {
-			   result[i] = internalEvaluate(exprs.get(i), tuple);
+			   Object eval = internalEvaluate(exprs.get(i), tuple);
+			   if (eval instanceof ArrayImpl) {
+				   eval = ((ArrayImpl)eval).getValues();
+			   }
+			   result[i] = eval;
 		   }
 		   return new ArrayImpl(result);
 	   } else if (expression instanceof ExceptionExpression) {
@@ -713,7 +774,7 @@ public class Evaluator {
 			if (value instanceof String) {
 				String string = (String)value;
 				result = new SQLXMLImpl(string);
-				result.setEncoding(Streamable.ENCODING);
+				result.setCharset(Streamable.CHARSET);
 				if (!xp.isWellFormed()) {
 					Reader r = new StringReader(string);
 					type = validate(xp, r);
@@ -1016,7 +1077,7 @@ public class Evaluator {
 		}
 	}
 	
-	public Result evaluateXQuery(SaxonXQueryExpression xquery, List<DerivedColumn> cols, List<?> tuple, RowProcessor processor) 
+	private Result evaluateXQuery(SaxonXQueryExpression xquery, List<DerivedColumn> cols, List<?> tuple, RowProcessor processor) 
 	throws BlockedException, TeiidComponentException, TeiidProcessingException {
 		HashMap<String, Object> parameters = new HashMap<String, Object>();
 		Object contextItem = evaluateParameters(cols, tuple, parameters);
@@ -1060,11 +1121,11 @@ public class Evaluator {
 					}
 					return XMLSystemFunctions.jsonToXml(context, rootName, (Clob)lob, true);
 				} catch (IOException e) {
-					throw new FunctionExecutionException(QueryPlugin.Event.TEIID30384, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30384, f.getFunctionDescriptor().getName()));
+					throw new FunctionExecutionException(QueryPlugin.Event.TEIID30384, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30384, f.getFunctionDescriptor().getName(), e.getMessage()));
 				} catch (SQLException e) {
-					throw new FunctionExecutionException(QueryPlugin.Event.TEIID30384, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30384, f.getFunctionDescriptor().getName()));
+					throw new FunctionExecutionException(QueryPlugin.Event.TEIID30384, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30384, f.getFunctionDescriptor().getName(), e.getMessage()));
 				} catch (TeiidProcessingException e) {
-					throw new FunctionExecutionException(QueryPlugin.Event.TEIID30384, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30384, f.getFunctionDescriptor().getName()));
+					throw new FunctionExecutionException(QueryPlugin.Event.TEIID30384, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30384, f.getFunctionDescriptor().getName(), e.getMessage()));
 				}
 			}
 		} else if (passing.getExpression() instanceof XMLParse) {
@@ -1137,7 +1198,7 @@ public class Evaluator {
 	}
 	
 	private Object evaluate(Function function, List<?> tuple)
-		throws ExpressionEvaluationException, BlockedException, TeiidComponentException {
+		throws BlockedException, TeiidComponentException, ExpressionEvaluationException {
 	
 	    // Get function based on resolved function info
 	    FunctionDescriptor fd = function.getFunctionDescriptor();
@@ -1160,7 +1221,13 @@ public class Evaluator {
 	        values[i+start] = internalEvaluate(args[i], tuple);
 	    }            
 	    
-	    fd.checkNotPushdown();	
+	    if (fd.getPushdown() == PushDown.MUST_PUSHDOWN) {
+	    	try {
+				return evaluatePushdown(function, tuple, values);
+			} catch (TeiidProcessingException e) {
+				throw new ExpressionEvaluationException(e);
+			}
+	    }
 	    
 	    // Check for special lookup function
 	    if(IFunctionLibrary.FunctionName.LOOKUP.equalsIgnoreCase(function.getName())) {
@@ -1175,7 +1242,7 @@ public class Evaluator {
 	        try {
 				return dataMgr.lookupCodeValue(context, codeTableName, returnElementName, keyElementName, values[3]);
 			} catch (TeiidProcessingException e) {
-				 throw new ExpressionEvaluationException(e);
+				throw new ExpressionEvaluationException(e);
 			}
 	    }
 	    
@@ -1183,6 +1250,11 @@ public class Evaluator {
 		return fd.invokeFunction(values, context, null);
 	}
 	
+	protected Object evaluatePushdown(Function function, List<?> tuple,
+			Object[] values) throws FunctionExecutionException, TeiidComponentException, TeiidProcessingException {
+		throw new FunctionExecutionException(QueryPlugin.Event.TEIID30341, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30341, function.getFunctionDescriptor().getFullName()));
+	}
+
 	private Object evaluate(ScalarSubquery scalarSubquery, List<?> tuple)
 	    throws ExpressionEvaluationException, BlockedException, TeiidComponentException {
 		

@@ -39,6 +39,7 @@ import org.teiid.designer.query.sql.lang.ISetQuery.Operation;
 import org.teiid.query.analysis.AnalysisRecord;
 import org.teiid.query.metadata.QueryMetadataInterface;
 import org.teiid.query.metadata.SupportConstants;
+import org.teiid.query.metadata.TempMetadataAdapter;
 import org.teiid.query.optimizer.capabilities.CapabilitiesFinder;
 import org.teiid.query.optimizer.capabilities.SourceCapabilities.Capability;
 import org.teiid.query.optimizer.relational.OptimizerRule;
@@ -46,17 +47,22 @@ import org.teiid.query.optimizer.relational.RuleStack;
 import org.teiid.query.optimizer.relational.plantree.NodeConstants;
 import org.teiid.query.optimizer.relational.plantree.NodeConstants.Info;
 import org.teiid.query.optimizer.relational.plantree.NodeEditor;
-import org.teiid.query.optimizer.relational.plantree.NodeFactory;
 import org.teiid.query.optimizer.relational.plantree.PlanNode;
+import org.teiid.query.processor.ProcessorPlan;
+import org.teiid.query.processor.relational.AccessNode;
 import org.teiid.query.sql.lang.CompareCriteria;
 import org.teiid.query.sql.lang.Criteria;
+import org.teiid.query.sql.lang.ExistsCriteria;
 import org.teiid.query.sql.lang.JoinType;
 import org.teiid.query.sql.lang.OrderBy;
 import org.teiid.query.sql.lang.OrderByItem;
+import org.teiid.query.sql.lang.SourceHint;
+import org.teiid.query.sql.lang.SubqueryContainer;
 import org.teiid.query.sql.symbol.AggregateSymbol;
 import org.teiid.query.sql.symbol.ElementSymbol;
 import org.teiid.query.sql.symbol.Expression;
 import org.teiid.query.sql.symbol.GroupSymbol;
+import org.teiid.query.sql.symbol.ScalarSubquery;
 import org.teiid.query.sql.symbol.WindowFunction;
 import org.teiid.query.sql.util.SymbolMap;
 import org.teiid.query.sql.visitor.AggregateSymbolCollectorVisitor;
@@ -72,19 +78,15 @@ public final class RuleRaiseAccess implements OptimizerRule {
 
         boolean afterJoinPlanning = !rules.contains(RuleConstants.PLAN_JOINS);
         
-        // Loop until nothing has been raised - plan is then stable and can be returned
-        boolean raisedNode = true;
-        while(raisedNode) {
-            raisedNode = false;
-
-            for (PlanNode accessNode : NodeEditor.findAllNodes(plan, NodeConstants.Types.ACCESS)) {
-                PlanNode newRoot = raiseAccessNode(plan, accessNode, metadata, capFinder, afterJoinPlanning, analysisRecord, context);
-                if(newRoot != null) {
-                    raisedNode = true;
-                    plan = newRoot;
-                }
-            }            
-        }
+        for (PlanNode accessNode : NodeEditor.findAllNodes(plan, NodeConstants.Types.ACCESS)) {
+        	while (true) {
+	            PlanNode newRoot = raiseAccessNode(plan, accessNode, metadata, capFinder, afterJoinPlanning, analysisRecord, context);
+	            if (newRoot == null) {
+	            	break;
+	            }
+                plan = newRoot;
+        	}
+        }            
         
         return plan;
 	}
@@ -110,8 +112,8 @@ public final class RuleRaiseAccess implements OptimizerRule {
             case NodeConstants.Types.JOIN:
             {
                 modelID = canRaiseOverJoin(modelID, parentNode, metadata, capFinder, afterJoinPlanning, record, context);
-                if(modelID != null) {
-                    raiseAccessOverJoin(parentNode, modelID, true);                    
+                if(modelID != null && checkConformedSubqueries(accessNode, parentNode, true)) {
+                    raiseAccessOverJoin(parentNode, accessNode, modelID, capFinder, metadata, true);                    
                     return rootNode;
                 }
                 return null;
@@ -202,6 +204,8 @@ public final class RuleRaiseAccess implements OptimizerRule {
             		if (node == accessNode) {
             			continue;
             		}
+                    combineSourceHints(accessNode, node);
+                    combineConformedSources(accessNode, node);
         			NodeEditor.removeChildNode(parentNode, node);
             	}
             	accessNode.getGroups().clear();
@@ -323,6 +327,11 @@ public final class RuleRaiseAccess implements OptimizerRule {
         }        
     }
 
+	private static void combineSourceHints(PlanNode accessNode,
+			PlanNode parentNode) {
+		accessNode.setProperty(Info.SOURCE_HINT, SourceHint.combine((SourceHint)parentNode.getProperty(Info.SOURCE_HINT), (SourceHint)accessNode.getProperty(Info.SOURCE_HINT)));
+	}
+
     static boolean canRaiseOverGroupBy(PlanNode groupNode,
                                          PlanNode accessNode,
                                          Collection<? extends AggregateSymbol> aggregates,
@@ -362,6 +371,10 @@ public final class RuleRaiseAccess implements OptimizerRule {
         }
         if (!CapabilitiesUtil.checkElementsAreSearchable(groupCols, metadata, SupportConstants.Element.SEARCHABLE_COMPARE)) {
         	groupNode.recordDebugAnnotation("non-searchable group by column", modelID, "cannot push group by", record, metadata); //$NON-NLS-1$ //$NON-NLS-2$
+        	return false;
+        }
+        if (groupNode.hasBooleanProperty(Info.ROLLUP) && !CapabilitiesUtil.supports(Capability.QUERY_GROUP_BY_ROLLUP, modelID, metadata, capFinder)) {
+        	groupNode.recordDebugAnnotation("source does not support rollup", modelID, "cannot push group by", record, metadata); //$NON-NLS-1$ //$NON-NLS-2$
         	return false;
         }
         return true;
@@ -419,6 +432,8 @@ public final class RuleRaiseAccess implements OptimizerRule {
         if (accessNode.hasBooleanProperty(Info.IS_MULTI_SOURCE)) {
         	return false;
         }
+        
+        //we don't need to check for extended grouping here since we'll create an inline view later
         
         return true;
     }
@@ -507,7 +522,11 @@ public final class RuleRaiseAccess implements OptimizerRule {
     }
     
     static PlanNode performRaise(PlanNode rootNode, PlanNode accessNode, PlanNode parentNode) {
+    	if (!checkConformedSubqueries(accessNode, parentNode, true)) {
+    		return rootNode;
+    	}
     	accessNode.removeProperty(NodeConstants.Info.EST_CARDINALITY);
+    	combineSourceHints(accessNode, parentNode);
         NodeEditor.removeChildNode(parentNode, accessNode);
         parentNode.addAsParent(accessNode);
         PlanNode grandparentNode = accessNode.getParent();
@@ -516,6 +535,43 @@ public final class RuleRaiseAccess implements OptimizerRule {
         }
         return accessNode;
     }
+
+	static boolean checkConformedSubqueries(PlanNode accessNode, PlanNode parentNode, boolean updateConformed) {
+		Set<Object> conformedSources = (Set<Object>)accessNode.getProperty(Info.CONFORMED_SOURCES);
+    	if (conformedSources == null) {
+    		return true;
+    	}
+    	conformedSources = new HashSet<Object>(conformedSources);
+		for (SubqueryContainer<?> container : parentNode.getSubqueryContainers()) {
+    		if (container instanceof ExistsCriteria && ((ExistsCriteria) container).shouldEvaluate()) {
+    			continue;
+    		}
+    		if (container instanceof ScalarSubquery && ((ScalarSubquery) container).shouldEvaluate()) {
+    			continue;
+    		}
+			ProcessorPlan plan = container.getCommand().getProcessorPlan();
+	    	if (plan == null) {
+	    		continue;
+	    	}
+	    	AccessNode aNode = CriteriaCapabilityValidatorVisitor.getAccessNode(plan);
+	    	if (aNode == null) {
+	    		continue;
+	    	}
+	    	Set<Object> conformedTo = aNode.getConformedTo();
+	    	if (conformedTo == null) {
+	    		conformedSources.retainAll(Collections.singletonList(aNode.getModelId()));
+	    	} else {
+	    		conformedSources.retainAll(conformedTo);
+	    	}
+	    	if (conformedSources.isEmpty()) {
+	    		return false;
+	    	}
+		}
+		if (updateConformed) {
+			updateConformed(accessNode, conformedSources);
+		}
+		return true;
+	}
 
     /**
      * Determine whether an access node can be raised over the specified join node.
@@ -655,13 +711,6 @@ public final class RuleRaiseAccess implements OptimizerRule {
     				}
         		}
 				
-        		/*
-        		 * Key joins must be left linear
-        		 */
-        		if (sjc == SupportedJoinCriteria.KEY && children.get(0).getGroups().size() != 1) {
-        			return null;
-        		}
-        		
 				if(crits != null && !crits.isEmpty()) {
 					for (Criteria crit : crits) {
 				        if (!isSupportedJoinCriteria(sjc, crit, accessModelID, metadata, capFinder, record)) {
@@ -679,9 +728,21 @@ public final class RuleRaiseAccess implements OptimizerRule {
 				        }
 					}
 					if (sjc == SupportedJoinCriteria.KEY) {
+						PlanNode left = children.get(0);
+						PlanNode right = children.get(1);
+        				if (left.getGroups().size() != 1) {
+        					if (right.getGroups().size() != 1) {
+        						return null; //require the simple case of 1 side being a single group
+        					}
+        					if (type != JoinType.JOIN_INNER) {
+        						return null;
+        					}
+        					left = children.get(1);
+        					right = children.get(0);
+        				}
 						LinkedList<Expression> leftExpressions = new LinkedList<Expression>();
 						LinkedList<Expression> rightExpressions = new LinkedList<Expression>();
-						RuleChooseJoinStrategy.separateCriteria(children.get(0).getGroups(), children.get(1).getGroups(), leftExpressions, rightExpressions, crits, new LinkedList<Criteria>());
+						RuleChooseJoinStrategy.separateCriteria(left.getGroups(), right.getGroups(), leftExpressions, rightExpressions, crits, new LinkedList<Criteria>());
 						ArrayList<Object> leftIds = new ArrayList<Object>(leftExpressions.size());
 						ArrayList<Object> rightIds = new ArrayList<Object>(rightExpressions.size());
 						for (Expression expr : leftExpressions) {
@@ -704,7 +765,7 @@ public final class RuleRaiseAccess implements OptimizerRule {
 						if (rightGroup == null) {
 							return null;
 						}
-						if (!matchesForeignKey(metadata, leftIds, rightIds,	children.get(0).getGroups().iterator().next(), true) 
+						if (!matchesForeignKey(metadata, leftIds, rightIds,	left.getGroups().iterator().next(), true) 
 								&& !matchesForeignKey(metadata, rightIds, leftIds, rightGroup, true)) {
 							return null;
 						}
@@ -717,8 +778,9 @@ public final class RuleRaiseAccess implements OptimizerRule {
 				modelID = accessModelID;
 				multiSource = childNode.hasBooleanProperty(Info.IS_MULTI_SOURCE);
 				
-			} else if(!CapabilitiesUtil.isSameConnector(modelID, accessModelID, metadata, capFinder)) { 
-				return null;							
+			} else if(!CapabilitiesUtil.isSameConnector(modelID, accessModelID, metadata, capFinder) 
+					&& !isConformed(metadata, capFinder, (Set<Object>) childNode.getProperty(Info.CONFORMED_SOURCES), modelID, (Set<Object>) children.get(0).getProperty(Info.CONFORMED_SOURCES), accessModelID)) { 
+				return null;
 			} else if ((multiSource || childNode.hasBooleanProperty(Info.IS_MULTI_SOURCE)) && !context.getOptions().isImplicitMultiSourceJoin()) {
 				//only allow raise if partitioned
 				boolean multiSourceOther = childNode.hasBooleanProperty(Info.IS_MULTI_SOURCE);
@@ -772,6 +834,22 @@ public final class RuleRaiseAccess implements OptimizerRule {
 		
 		return modelID;
     }
+
+	static boolean isConformed(QueryMetadataInterface metadata,
+			CapabilitiesFinder capFinder, Set<Object> sources, Object id, Set<Object> sources1, Object id1)
+			throws QueryMetadataException, TeiidComponentException,
+			AssertionError {
+		if (sources == null) {
+			if (sources1 == null) {
+				return false;
+			}
+			return sources1.contains(id);
+		} else if (sources1 == null) {
+			return sources.contains(id1);
+		}
+		//TODO we could use the isSameConnector logic
+		return !Collections.disjoint(sources, sources1);
+	}
     
     /**
      * Checks criteria one predicate at a time.  Only tests up to the equi restriction.
@@ -830,65 +908,82 @@ public final class RuleRaiseAccess implements OptimizerRule {
 		return false;
 	}
     
-    static PlanNode raiseAccessOverJoin(PlanNode joinNode, Object modelID, boolean insert) {
+    static PlanNode raiseAccessOverJoin(PlanNode joinNode, PlanNode accessNode, Object modelID, CapabilitiesFinder capFinder, QueryMetadataInterface metadata, boolean insert) 
+    		throws QueryMetadataException, TeiidComponentException {
 		PlanNode leftAccess = joinNode.getFirstChild();
 		PlanNode rightAccess = joinNode.getLastChild();
+		boolean switchChildren = false;
+		if (leftAccess.getGroups().size() != 1 && joinNode.getProperty(Info.JOIN_TYPE) == JoinType.JOIN_INNER && CapabilitiesUtil.getSupportedJoinCriteria(modelID, metadata, capFinder) == SupportedJoinCriteria.KEY) {
+			switchChildren = true;
+		}
+		
+		PlanNode other = leftAccess == accessNode?rightAccess:leftAccess;
 
 		// Remove old access nodes - this will automatically add children of access nodes to join node
 		NodeEditor.removeChildNode(joinNode, leftAccess);
 		NodeEditor.removeChildNode(joinNode, rightAccess);
+		
+		combineConformedSources(accessNode, other);
         
         //Set for later possible use, even though this isn't an access node
         joinNode.setProperty(NodeConstants.Info.MODEL_ID, modelID);
 
 		// Insert new access node above join node 
-		PlanNode newAccess = NodeFactory.getNewNode(NodeConstants.Types.ACCESS);
-		newAccess.setProperty(NodeConstants.Info.MODEL_ID, modelID);
-		newAccess.addGroups(rightAccess.getGroups());
-		newAccess.addGroups(leftAccess.getGroups());
+        accessNode.addGroups(other.getGroups());
         
         // Combine hints if necessary
-        combineHint(leftAccess, rightAccess, newAccess, NodeConstants.Info.MAKE_DEP);
-        combineHint(leftAccess, rightAccess, newAccess, NodeConstants.Info.MAKE_IND);
-        RulePlaceAccess.copyDependentHints(leftAccess, newAccess);
-        RulePlaceAccess.copyDependentHints(rightAccess, newAccess);
-        RulePlaceAccess.copyDependentHints(joinNode, newAccess);
-        if (leftAccess.hasBooleanProperty(Info.IS_MULTI_SOURCE) || rightAccess.hasBooleanProperty(Info.IS_MULTI_SOURCE)) {
-        	newAccess.setProperty(Info.IS_MULTI_SOURCE, Boolean.TRUE);
+        RulePlaceAccess.copyDependentHints(other, accessNode);
+        RulePlaceAccess.copyDependentHints(joinNode, other);
+        combineSourceHints(accessNode, other);
+        
+        if (other.hasBooleanProperty(Info.IS_MULTI_SOURCE)) {
+        	accessNode.setProperty(Info.IS_MULTI_SOURCE, Boolean.TRUE);
         }
-        String sourceName = (String)leftAccess.getProperty(Info.SOURCE_NAME);
+        String sourceName = (String)other.getProperty(Info.SOURCE_NAME);
         if (sourceName != null) {
-        	newAccess.setProperty(Info.SOURCE_NAME, sourceName);
-        } else {
-            sourceName = (String)rightAccess.getProperty(Info.SOURCE_NAME);
-            if (sourceName != null) {
-            	newAccess.setProperty(Info.SOURCE_NAME, sourceName);
-            }
+        	accessNode.setProperty(Info.SOURCE_NAME, sourceName);
         }
         
         if (insert) {
-            joinNode.addAsParent(newAccess);
+            joinNode.addAsParent(accessNode);
         } else {
-            newAccess.addFirstChild(joinNode);
+            accessNode.addFirstChild(joinNode);
         }
         
-        return newAccess;
-	}
-
-	private static void combineHint(PlanNode leftAccess, PlanNode rightAccess,
-			PlanNode newAccess, NodeConstants.Info info) {
-		Object leftHint = leftAccess.getProperty(info);
-        if(leftHint != null) {
-            newAccess.setProperty(info, leftHint);
-        } else {
-            Object rightHint = rightAccess.getProperty(info);
-            if(rightHint != null) {
-                newAccess.setProperty(info, rightHint);
-            }    
+        if (switchChildren) {
+        	JoinUtil.swapJoinChildren(joinNode);
         }
+        
+        return accessNode;
 	}
 
-    /**
+    private static void combineConformedSources(PlanNode accessNode,
+			PlanNode other) {
+    	Set<Object> conformedSources = (Set<Object>)accessNode.getProperty(Info.CONFORMED_SOURCES);
+    	Set<Object> conformedSourcesOther = (Set<Object>)other.getProperty(Info.CONFORMED_SOURCES);
+    	if (conformedSources == null || conformedSources.isEmpty() || conformedSourcesOther == null || conformedSourcesOther.isEmpty()) {
+    		accessNode.setProperty(Info.CONFORMED_SOURCES, null);
+    		return;
+    	}
+    	conformedSources.retainAll(conformedSourcesOther);
+    	updateConformed(accessNode, conformedSources);
+	}
+
+	private static void updateConformed(PlanNode accessNode,
+			Set<Object> conformedSources) throws AssertionError {
+		if (conformedSources.isEmpty()) {
+    		throw new AssertionError("Planning error, no conformed sources in common."); //$NON-NLS-1$
+    	}
+    	if (!conformedSources.contains(accessNode.getProperty(Info.MODEL_ID))) {
+    		//switch to another id - TODO: make a better selection
+    		accessNode.setProperty(Info.MODEL_ID, conformedSources.iterator().next());
+    	}
+    	if (conformedSources.size() == 1) {
+    		accessNode.setProperty(Info.CONFORMED_SOURCES, null);
+    	}
+	}
+
+	/**
      * Get modelID for Access node and cache the result in the Access node.
      * @param accessNode Access node
      * @param metadata Metadata access
@@ -903,6 +998,9 @@ public final class RuleRaiseAccess implements OptimizerRule {
         if(accessModelID == null && accessNode.getGroups().size() > 0) {
             GroupSymbol group = accessNode.getGroups().iterator().next();
             if(metadata.isVirtualGroup(group.getMetadataID())) {
+            	if (metadata.isTemporaryTable(group.getMetadataID())) {
+            		return TempMetadataAdapter.TEMP_MODEL;
+            	}
                 return null;
             }
             accessModelID = metadata.getModelID(group.getMetadataID());

@@ -45,6 +45,7 @@ import org.teiid.adminapi.impl.VDBMetaData;
 import org.teiid.client.security.SessionToken;
 import org.teiid.core.util.PropertiesUtils;
 import org.teiid.dqp.message.RequestID;
+import org.teiid.jdbc.EmbeddedProfile;
 import org.teiid.logging.LogManager;
 import org.teiid.metadata.MetadataFactory;
 import org.teiid.query.metadata.SystemMetadata;
@@ -68,7 +69,8 @@ public class DQPWorkContext implements Serializable {
 		SEVEN_4("07.04", (byte)0), //$NON-NLS-1$
 		EIGHT_0("08.00", (byte)(longDatesTimes?0:1)), //$NON-NLS-1$
 		EIGHT_2("08.02", (byte)2), //$NON-NLS-1$
-		EIGHT_4("08.04.00.CR3", (byte)2); //$NON-NLS-1$
+		EIGHT_4("08.04.00.CR3", (byte)2), //$NON-NLS-1$
+		EIGHT_6("08.06.00.Beta3", (byte)3); //$NON-NLS-1$
 		
 		private String string;
 		private byte clientSerializationVersion;
@@ -138,6 +140,8 @@ public class DQPWorkContext implements Serializable {
     private Version clientVersion = Version.SEVEN_4;
     private boolean admin;
     private MetadataFactory metadataFactory;
+
+	private transient EmbeddedProfile connectionProfile = new EmbeddedProfile();
     
     public DQPWorkContext() {
 	}
@@ -350,6 +354,14 @@ public class DQPWorkContext implements Serializable {
 			this.metadataFactory = new MetadataFactory("temp", 1, "temp", SystemMetadata.getInstance().getRuntimeTypeMap(), null, null); //$NON-NLS-1$ //$NON-NLS-2$
 		}
 		return this.metadataFactory;
+	}
+
+	public void setConnectionProfile(EmbeddedProfile connectionProfile) {
+		this.connectionProfile = connectionProfile;
+	}
+	
+	public EmbeddedProfile getConnectionProfile() {
+		return connectionProfile;
 	}
 	
 }

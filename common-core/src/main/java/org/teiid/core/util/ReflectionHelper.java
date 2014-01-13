@@ -325,10 +325,11 @@ public class ReflectionHelper {
         
         try {
 			return ctor.newInstance(ctorObjs);
-        } catch (InvocationTargetException e) {
-        	throw new TeiidException(CorePlugin.Event.TEIID10036, e.getTargetException());
+		} catch (InvocationTargetException e) {
+			throw new TeiidException(CorePlugin.Event.TEIID10036, e.getTargetException());
 		} catch (Exception e) {
 			  throw new TeiidException(CorePlugin.Event.TEIID10036, e);
 		}
     }
+    
 }

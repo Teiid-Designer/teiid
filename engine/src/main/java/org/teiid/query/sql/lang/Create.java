@@ -151,7 +151,7 @@ public class Create extends Command
     	this.columns.clear();
     	for (ElementSymbol elementSymbol : columns) {
     		Column c = new Column();
-    		c.setName(elementSymbol.getName());
+    		c.setName(elementSymbol.getShortName());
     		c.setRuntimeType(DataTypeManager.getDataTypeName(elementSymbol.getType()));
     		c.setNullType(NullType.Nullable);
     		this.columns.add(c);

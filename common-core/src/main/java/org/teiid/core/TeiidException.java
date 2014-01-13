@@ -24,8 +24,6 @@ package org.teiid.core;
 
 import java.sql.SQLException;
 
-import org.teiid.core.util.ExceptionUtil;
-
 
 
 /**
@@ -53,7 +51,7 @@ public class TeiidException extends Exception {
     
     public TeiidException(BundleUtil.Event code, Throwable t, final String message) {
         super(message, t);
-        if (message != null && message.equals(t.getMessage())) {
+        if (message != null && t != null && message.equals(t.getMessage())) {
         	setCode(code, t);
         } else {
         	setCode(code.toString());
@@ -123,16 +121,4 @@ public class TeiidException extends Exception {
 		return code+" "+message; //$NON-NLS-1$
 	} 
 	
-    /**
-     * Get the full error message, including any message(s) from child
-     * exceptions.
-     *
-     * @return The full error message
-     *
-     * @see #getFormattedMessage
-     */
-    public String getFullMessage() {
-    	return ExceptionUtil.getLinkedMessagesVerbose(this);
-    }
-    
 }

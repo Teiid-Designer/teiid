@@ -46,5 +46,7 @@ public interface ConnectorWork {
 	CacheDirective getCacheDirective() throws TranslatorException;
 
 	boolean isForkable();
+
+	boolean isThreadBound();
 	
 }

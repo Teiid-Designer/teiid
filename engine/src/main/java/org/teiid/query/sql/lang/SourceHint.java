@@ -22,48 +22,67 @@
 
 package org.teiid.query.sql.lang;
 
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.TreeMap;
 
 import org.teiid.core.util.EquivalenceUtil;
+import org.teiid.core.util.StringUtil;
 import org.teiid.designer.query.sql.lang.ISourceHint;
 
 public class SourceHint implements ISourceHint {
 	
 	public static class SpecificHint {
-		String hint;
+		LinkedHashSet<String> hints = new LinkedHashSet<String>();
 		boolean useAliases;
 
 		public SpecificHint(String hint, boolean useAliases) {
-			this.hint = hint;
+			this.hints.add(hint);
 			this.useAliases = useAliases;
 		}
 		
 		public String getHint() {
-			return hint;
+			return StringUtil.join(hints, " ");
 		}
 		public boolean isUseAliases() {
 			return useAliases;
 		}
+
+		public Collection<String> getHints() {
+			return hints;
+		}
 	}
 	
 	private boolean useAliases;
-	private String generalHint;
+	private LinkedHashSet<String> generalHint;
 	private Map<String, SpecificHint> sourceHints;
 	
 	public String getGeneralHint() {
-		return generalHint;
+		if (generalHint == null) {
+			return null;
+		}
+		return StringUtil.join(generalHint, " ");
 	}
 	
 	public void setGeneralHint(String generalHint) {
-		this.generalHint = generalHint;
+		if (this.generalHint == null) {
+			this.generalHint = new LinkedHashSet<String>();
+		}
+		this.generalHint.add(generalHint);
 	}
 	
-	public void setSourceHint(String translatorName, String hint, boolean useAliases) {
+	public void setSourceHint(String sourceName, String hint, boolean useAliases) {
 		if (this.sourceHints == null) {
 			this.sourceHints = new TreeMap<String, SpecificHint>(String.CASE_INSENSITIVE_ORDER);
 		}
-		this.sourceHints.put(translatorName, new SpecificHint(hint, useAliases));
+		SpecificHint sh = this.sourceHints.get(sourceName);
+		if (sh == null) {
+			this.sourceHints.put(sourceName, new SpecificHint(hint, useAliases));
+		} else {
+			sh.useAliases |= useAliases;
+			sh.hints.add(hint);
+		}
 	}
 	
 	public SpecificHint getSpecificHint(String sourceName) {
@@ -90,7 +109,7 @@ public class SourceHint implements ISourceHint {
 	}
 	
 	public void setUseAliases(boolean useAliases) {
-		this.useAliases = useAliases;
+		this.useAliases |= useAliases;
 	}
 	
 	@Override
@@ -104,6 +123,44 @@ public class SourceHint implements ISourceHint {
 		SourceHint other = (SourceHint)obj;
 		return EquivalenceUtil.areEqual(generalHint, other.generalHint) 
 		&& EquivalenceUtil.areEqual(this.sourceHints, other.sourceHints);
+	}
+
+	public static SourceHint combine(SourceHint sourceHint,
+			SourceHint sourceHint2) {
+		if (sourceHint == null) {
+			if (sourceHint2 == null) {
+				return null;
+			}
+			return sourceHint2;
+		} else if (sourceHint2 == null) {
+			return sourceHint;
+		}
+		SourceHint newHint = new SourceHint();
+		addHints(sourceHint, newHint);
+		addHints(sourceHint2, newHint);
+		return newHint;
+	}
+
+	private static void addHints(SourceHint sourceHint,
+			SourceHint newHint) {
+		if (sourceHint.sourceHints != null) {
+			for (Map.Entry<String, SpecificHint> entry : sourceHint.sourceHints.entrySet()) {
+				for (String hint : entry.getValue().hints) {
+					newHint.setSourceHint(entry.getKey(), hint, entry.getValue().useAliases);
+				}
+			}
+		}
+		newHint.setUseAliases(sourceHint.isUseAliases());
+		if (sourceHint.generalHint != null) {
+			if (newHint.generalHint == null) {
+				newHint.generalHint = new LinkedHashSet<String>();
+			}
+			newHint.generalHint.addAll(sourceHint.generalHint);
+		}
+	}
+
+	public Collection<String> getGeneralHints() {
+		return generalHint;
 	}
 	
 }

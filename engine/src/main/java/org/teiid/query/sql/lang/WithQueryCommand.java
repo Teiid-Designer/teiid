@@ -2,6 +2,7 @@ package org.teiid.query.sql.lang;
 
 import java.util.List;
 
+import org.teiid.common.buffer.TupleBuffer;
 import org.teiid.core.util.EquivalenceUtil;
 import org.teiid.designer.query.sql.lang.IWithQueryCommand;
 import org.teiid.query.sql.LanguageObject;
@@ -11,11 +12,12 @@ import org.teiid.query.sql.symbol.GroupSymbol;
 import org.teiid.query.sql.visitor.SQLStringVisitor;
 
 public class WithQueryCommand
-    implements LanguageObject, SubqueryContainer<QueryCommand>, IWithQueryCommand<LanguageVisitor, QueryCommand> {
+    implements SubqueryContainer<QueryCommand>, IWithQueryCommand<LanguageVisitor, QueryCommand> {
 	
 	private GroupSymbol groupSymbol;
 	private List<ElementSymbol> columns;
 	private QueryCommand queryExpression;
+	private TupleBuffer tupleBuffer;
 	
 	public WithQueryCommand(GroupSymbol groupSymbol, List<ElementSymbol> columns, QueryCommand queryExpression) {
 		this.groupSymbol = groupSymbol;
@@ -51,7 +53,12 @@ public class WithQueryCommand
 	
 	@Override
 	public WithQueryCommand clone() {
-		return new WithQueryCommand(groupSymbol.clone(), LanguageObject.Util.deepClone(columns, ElementSymbol.class), (QueryCommand)queryExpression.clone());
+		WithQueryCommand clone = new WithQueryCommand(groupSymbol.clone(), LanguageObject.Util.deepClone(columns, ElementSymbol.class), null);
+		if (queryExpression != null) {
+			clone.queryExpression = (QueryCommand)queryExpression.clone();
+		}
+		clone.tupleBuffer = this.tupleBuffer;
+		return clone;
 	}
 	
 	@Override
@@ -76,6 +83,14 @@ public class WithQueryCommand
 	@Override
 	public String toString() {
 		return SQLStringVisitor.getSQLString(this);
+	}
+	
+	public void setTupleBuffer(TupleBuffer tupleBuffer) {
+		this.tupleBuffer = tupleBuffer;
+	}
+	
+	public TupleBuffer getTupleBuffer() {
+		return tupleBuffer;
 	}
 	
 }

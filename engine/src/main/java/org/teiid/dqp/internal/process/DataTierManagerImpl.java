@@ -35,6 +35,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.TreeMap;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.teiid.adminapi.impl.ModelMetaData;
 import org.teiid.adminapi.impl.VDBMetaData;
@@ -61,17 +65,21 @@ import org.teiid.core.util.StringUtil;
 import org.teiid.dqp.internal.datamgr.ConnectorManager;
 import org.teiid.dqp.internal.datamgr.ConnectorManagerRepository;
 import org.teiid.dqp.internal.datamgr.ConnectorWork;
+import org.teiid.dqp.internal.process.AbstractWorkItem.ThreadState;
+import org.teiid.dqp.internal.process.DQPCore.CompletionListener;
 import org.teiid.dqp.internal.process.RecordTable.ExpandingSimpleIterator;
 import org.teiid.dqp.internal.process.RecordTable.SimpleIterator;
 import org.teiid.dqp.internal.process.RecordTable.SimpleIteratorWrapper;
 import org.teiid.dqp.internal.process.SessionAwareCache.CacheID;
 import org.teiid.dqp.internal.process.TupleSourceCache.CachableVisitor;
+import org.teiid.dqp.internal.process.TupleSourceCache.CopyOnReadTupleSource;
 import org.teiid.dqp.message.AtomicRequestMessage;
 import org.teiid.events.EventDistributor;
 import org.teiid.logging.LogConstants;
 import org.teiid.logging.LogManager;
 import org.teiid.logging.MessageLevel;
 import org.teiid.metadata.*;
+import org.teiid.metadata.Table.TriggerEvent;
 import org.teiid.query.QueryPlugin;
 import org.teiid.query.metadata.CompositeMetadataStore;
 import org.teiid.query.metadata.CompositeMetadataStore.RecordHolder;
@@ -83,11 +91,11 @@ import org.teiid.query.parser.ParseInfo;
 import org.teiid.query.processor.CollectionTupleSource;
 import org.teiid.query.processor.ProcessorDataManager;
 import org.teiid.query.processor.RegisterRequestParameter;
+import org.teiid.query.processor.relational.RelationalNodeUtil;
 import org.teiid.query.resolver.util.ResolverUtil;
 import org.teiid.query.sql.lang.Command;
 import org.teiid.query.sql.lang.Criteria;
 import org.teiid.query.sql.lang.Query;
-import org.teiid.query.sql.lang.SourceHint;
 import org.teiid.query.sql.lang.StoredProcedure;
 import org.teiid.query.sql.lang.UnaryFromClause;
 import org.teiid.query.sql.navigator.PreOrPostOrderNavigator;
@@ -100,6 +108,7 @@ import org.teiid.query.tempdata.GlobalTableStore;
 import org.teiid.query.tempdata.GlobalTableStoreImpl.MatTableInfo;
 import org.teiid.query.util.CommandContext;
 import org.teiid.translator.CacheDirective;
+import org.teiid.translator.CacheDirective.Invalidation;
 import org.teiid.translator.CacheDirective.Scope;
 import org.teiid.translator.TranslatorException;
 
@@ -110,6 +119,60 @@ import org.teiid.translator.TranslatorException;
 public class DataTierManagerImpl implements ProcessorDataManager {
 	
 	private static final int MAX_VALUE_LENGTH = 1 << 21;
+
+	private static final class ThreadBoundTask implements Callable<Void>, CompletionListener<Void> {
+		private final RequestWorkItem workItem;
+		private final TupleSource toRead;
+		final AtomicBoolean done = new AtomicBoolean();
+		private final DataTierTupleSource dtts;
+
+		private ThreadBoundTask(RequestWorkItem workItem, TupleSource toRead, DataTierTupleSource dtts) {
+			this.workItem = workItem;
+			this.toRead = toRead;
+			this.dtts = dtts;
+		}
+
+		@Override
+		public Void call() throws TeiidProcessingException, TeiidComponentException {
+			//pull the whole thing.  the side effect will be saving
+			while (true) {
+				try {
+					if (done.get() || toRead.nextTuple() == null) {
+						break;
+					}
+					signalMore();
+				} catch (BlockedException e) {
+					//data not available
+					Future<Void> future = dtts.getScheduledFuture();
+					if (future != null) {
+						try {
+							future.get();
+						} catch (Exception e1) {
+							throw new TeiidComponentException(e);
+						}
+					}
+				}
+			};
+			return null;
+		}
+
+		private void signalMore() {
+			if (!done.get()) {
+				synchronized (workItem) {
+					if (workItem.getThreadState() != ThreadState.MORE_WORK) {
+						workItem.moreWork();
+					}
+				}
+			}
+		}
+
+		@Override
+		public void onCompletion(FutureWork<Void> future) {
+			signalMore();
+			toRead.closeSource();
+			dtts.fullyCloseSource();
+		}
+	}
 
 	private enum SystemTables {
 		VIRTUALDATABASES,
@@ -127,7 +190,8 @@ public class DataTierManagerImpl implements ProcessorDataManager {
 	
 	private enum SystemAdminTables {
 		MATVIEWS,
-		VDBRESOURCES
+		VDBRESOURCES,
+		TRIGGERS
 	}
 	
 	private enum SystemAdminProcs {
@@ -446,7 +510,7 @@ public class DataTierManagerImpl implements ProcessorDataManager {
         		String value = entry.getValue();
 				Clob clobValue = null;
 				if (value != null) {
-					clobValue = new ClobType(ClobImpl.createClob(value.toCharArray()));
+					clobValue = new ClobType(new ClobImpl(value));
 				}
 				row.add(entry.getKey());
 				row.add(entry.getValue());
@@ -460,6 +524,44 @@ public class DataTierManagerImpl implements ProcessorDataManager {
         		return parent.getProperties().entrySet();
         	}
 		});
+        name = SystemAdminTables.TRIGGERS.name();
+        columns = getColumns(tm, name);
+        systemAdminTables.put(SystemAdminTables.TRIGGERS, new ChildRecordExtractionTable<Table, Trigger>(new TableSystemTable(1, 2, columns), columns) {
+        	@Override
+        	protected void fillRow(List<Object> row, Trigger record, VDBMetaData vdb, TransformationMetadata metadata, CommandContext cc, SimpleIterator<Trigger> iter) {
+        		Clob clobValue = null;
+				if (record.body != null) {
+					clobValue = new ClobType(new ClobImpl(record.body));
+				}
+				AbstractMetadataRecord table = ((ExpandingSimpleIterator<AbstractMetadataRecord, Trigger>)iter).getCurrentParent();				
+				row.add(vdb.getName());
+				row.add(table.getParent().getName());
+				row.add(table.getName());
+				row.add(record.name);
+				row.add(record.triggerType);
+				row.add(record.triggerEvent);
+				row.add(record.status);
+				row.add(clobValue);
+				row.add(table.getUUID());
+        	}
+        	
+        	@Override
+        	protected Collection<Trigger> getChildren(Table table) {
+        		ArrayList<Trigger> cols = new ArrayList<Trigger>();
+        		if (table .isVirtual()) {
+        			if (table.getInsertPlan() != null) {
+        				cols.add(new Trigger("it", TriggerEvent.INSERT.name(), table.isInsertPlanEnabled(), null, table.getInsertPlan())); //$NON-NLS-1$ 
+        			}
+        			if (table.getUpdatePlan() != null) {
+        				cols.add(new Trigger("ut", TriggerEvent.UPDATE.name(), table.isUpdatePlanEnabled(), null, table.getUpdatePlan())); //$NON-NLS-1$ 
+        			}
+        			if (table.getDeletePlan() != null) {
+        				cols.add(new Trigger("dt", TriggerEvent.DELETE.name(), table.isDeletePlanEnabled(), null, table.getDeletePlan())); //$NON-NLS-1$ 
+        			}        			
+        		}
+        		return cols;
+        	}
+        });        
         name = SystemTables.COLUMNS.name();
         columns = getColumns(tm, name);
         systemTables.put(SystemTables.COLUMNS, new ChildRecordExtractionTable<Table, Column>(new TableSystemTable(1, 2, columns), columns) {
@@ -649,11 +751,6 @@ public class DataTierManagerImpl implements ProcessorDataManager {
 		if (parameterObject.fetchSize > 0) {
 			aqr.setFetchSize(2*parameterObject.fetchSize);
 		}
-		SourceHint sh = context.getSourceHint();
-		if (sh != null) {
-			aqr.setGeneralHint(sh.getGeneralHint());
-			aqr.setHint(sh.getSourceHint(aqr.getConnectorName()));
-		}
 		if (parameterObject.limit > 0) {
 			aqr.setFetchSize(Math.min(parameterObject.limit, aqr.getFetchSize()));
 		}
@@ -666,6 +763,14 @@ public class DataTierManagerImpl implements ProcessorDataManager {
 		}
 		ConnectorManagerRepository cmr = workItem.getDqpWorkContext().getVDB().getAttachment(ConnectorManagerRepository.class);
 		ConnectorManager connectorManager = cmr.getConnectorManager(aqr.getConnectorName());
+		if (connectorManager == null) {
+			//can happen if sources are removed
+			if (RelationalNodeUtil.hasOutputParams(command)) {
+				throw new AssertionError("A source is required to execute a procedure returning parameters"); //$NON-NLS-1$
+			}
+			LogManager.logDetail(LogConstants.CTX_DQP, "source", aqr.getConnectorName(), "no longer exists, returning dummy results"); //$NON-NLS-1$ //$NON-NLS-2$
+			return CollectionTupleSource.createNullTupleSource();
+		}
 		ConnectorWork work = connectorManager.registerRequest(aqr);
 		if (!work.isForkable()) {
     		aqr.setSerial(true);
@@ -689,12 +794,16 @@ public class DataTierManagerImpl implements ProcessorDataManager {
 						if (cmdString.length() < 100000) { //TODO: this check won't be needed if keys aren't exclusively held in memory
 							cid = new CacheID(workItem.getDqpWorkContext(), ParseInfo.DEFAULT_INSTANCE, cmdString);
 							cid.setParameters(cv.parameters);
-							CachedResults cr = workItem.getRsCache().get(cid);
-							if (cr != null && (cr.getRowLimit() == 0 || (parameterObject.limit > 0 && cr.getRowLimit() >= parameterObject.limit))) {
-								parameterObject.doNotCache = true;
-								LogManager.logDetail(LogConstants.CTX_DQP, "Using cache entry for", cid); //$NON-NLS-1$
-								work.close();
-								return cr.getResults().createIndexedTupleSource();
+							if (cd.getInvalidation() == null || cd.getInvalidation() == Invalidation.NONE) {
+								CachedResults cr = workItem.getRsCache().get(cid);
+								if (cr != null && (cr.getRowLimit() == 0 || (parameterObject.limit > 0 && cr.getRowLimit() >= parameterObject.limit))) {
+									parameterObject.doNotCache = true;
+									LogManager.logDetail(LogConstants.CTX_DQP, "Using cache entry for", cid); //$NON-NLS-1$
+									work.close();
+									return cr.getResults().createIndexedTupleSource();
+								}
+							} else if (cd.getInvalidation() == Invalidation.IMMEDIATE) {
+								workItem.getRsCache().remove(cid, CachingTupleSource.getDeterminismLevel(cd.getScope()));
 							}
 						}
 					}
@@ -706,11 +815,117 @@ public class DataTierManagerImpl implements ProcessorDataManager {
 			}
 		}
 		DataTierTupleSource dtts = new DataTierTupleSource(aqr, workItem, work, this, parameterObject.limit);
+		TupleSource result = dtts;
+		TupleBuffer tb = null;
         if (cid != null) {
-        	TupleBuffer tb = getBufferManager().createTupleBuffer(aqr.getCommand().getProjectedSymbols(), aqr.getCommandContext().getConnectionId(), TupleSourceType.PROCESSOR);
-        	return new CachingTupleSource(this, tb, dtts, cid, parameterObject, cd, accessedGroups);
+        	tb = getBufferManager().createTupleBuffer(aqr.getCommand().getProjectedSymbols(), aqr.getCommandContext().getConnectionId(), TupleSourceType.PROCESSOR);
+        	result = new CachingTupleSource(this, tb, (DataTierTupleSource)result, cid, parameterObject, cd, accessedGroups, workItem);
         }
-		return dtts;
+        if (work.isThreadBound()) {
+        	result = handleThreadBound(workItem, aqr, work, cid, result, dtts, tb);
+		} else if (!aqr.isSerial()) {
+			dtts.addWork();
+		}
+		return result;
+	}
+
+	/**
+	 * thread bound work is tricky for our execution model
+	 * 
+	 * the strategy here is that 
+	 * 
+	 * - if the result is not already a copying tuplesource (from caching)
+	 * then wrap in a copying tuple source
+	 * 
+	 * - submit a workitem that will pull the results/fill the buffer,
+	 * 
+	 * - return a tuplesource off of the buffer for use by the caller
+	 */
+	private TupleSource handleThreadBound(final RequestWorkItem workItem,
+			AtomicRequestMessage aqr, ConnectorWork work, CacheID cid,
+			TupleSource result, DataTierTupleSource dtts, TupleBuffer tb) throws AssertionError,
+			TeiidComponentException, TeiidProcessingException {
+		if (workItem.useCallingThread) {
+			//in any case we want the underlying work done in the thread accessing the connectorworkitem
+			aqr.setSerial(true); 
+			return result; //simple case, just rely on the client using the same thread
+		}
+		if (tb == null) {
+			tb = getBufferManager().createTupleBuffer(aqr.getCommand().getProjectedSymbols(), aqr.getCommandContext().getConnectionId(), TupleSourceType.PROCESSOR);
+		}
+		final TupleSource ts = tb.createIndexedTupleSource(cid == null);
+		if (cid == null) {
+			result = new CopyOnReadTupleSource(tb, result) {
+				
+				@Override
+				public void closeSource() {
+					ts.closeSource();
+				}
+			};
+		}
+		final ThreadBoundTask callable = new ThreadBoundTask(workItem, result, dtts);
+		
+		//if serial we have to fully perform the operation with the current thread
+		//but we do so lazily just in case the results aren't needed
+		if (aqr.isSerial()) {
+			return new TupleSource() {
+				boolean processed = false;
+				@Override
+				public List<?> nextTuple() throws TeiidComponentException,
+						TeiidProcessingException {
+					if (!processed) {
+						callable.call();
+						processed = true;
+					}
+					return ts.nextTuple();
+				}
+				
+				@Override
+				public void closeSource() {
+					ts.closeSource();
+				}
+			};
+		}
+		aqr.setSerial(true);
+		final FutureWork<Void> future = workItem.addWork(callable, callable, 100);
+		final TupleBuffer buffer = tb;
+		//return a thread-safe TupleSource
+		return new TupleSource() {
+			boolean checkedDone;
+			@Override
+			public List<?> nextTuple() throws TeiidComponentException,
+					TeiidProcessingException {
+				//check the future to see if there was an exception to relay
+				//TODO: could refactor as completion listener
+				if (!checkedDone && future.isDone()) {
+					checkedDone = true;
+					try {
+						future.get();
+					} catch (InterruptedException e) {
+						throw new TeiidComponentException(e);
+					} catch (ExecutionException e) {
+						if (e.getCause() instanceof TeiidComponentException) {
+							throw (TeiidComponentException)e.getCause();
+						}
+						if (e.getCause() instanceof TeiidProcessingException) {
+							throw (TeiidProcessingException)e.getCause();
+						}
+						throw new TeiidComponentException(e);
+					}
+				}
+				synchronized (buffer) {
+					return ts.nextTuple();
+				}
+			}
+			
+			@Override
+			public void closeSource() {
+				synchronized (buffer) {
+					ts.closeSource();
+				}
+				callable.done.set(true);
+			}
+		};
 	}
 
 	/**
@@ -800,7 +1015,7 @@ public class DataTierManagerImpl implements ProcessorDataManager {
 						if (result == null) {
 							rows.add(Arrays.asList((Clob)null));
 						} else {
-							rows.add(Arrays.asList(new ClobType(ClobImpl.createClob(result.toCharArray()))));
+							rows.add(Arrays.asList(new ClobType(new ClobImpl(result))));
 						}
 					}
 					return new CollectionTupleSource(rows.iterator());
@@ -824,8 +1039,8 @@ public class DataTierManagerImpl implements ProcessorDataManager {
 				if (c == null) {
 					 throw new TeiidProcessingException(QueryPlugin.Event.TEIID30552, columnName + TransformationMetadata.NOT_EXISTS_MESSAGE);
 				}
-				Integer distinctVals = (Integer)((Constant)proc.getParameter(3).getExpression()).getValue();
-				Integer nullVals = (Integer)((Constant)proc.getParameter(4).getExpression()).getValue();
+				Number distinctVals = (Number)((Constant)proc.getParameter(3).getExpression()).getValue();
+				Number nullVals = (Number)((Constant)proc.getParameter(4).getExpression()).getValue();
 				String max = (String) ((Constant)proc.getParameter(5).getExpression()).getValue();
 				String min = (String) ((Constant)proc.getParameter(6).getExpression()).getValue();
 				ColumnStats columnStats = new ColumnStats();
@@ -843,13 +1058,13 @@ public class DataTierManagerImpl implements ProcessorDataManager {
 				break;
 			case SETTABLESTATS:
 				Constant val = (Constant)proc.getParameter(2).getExpression();
-				int cardinality = (Integer)val.getValue();
+				Number cardinality = (Number)val.getValue();
 				TableStats tableStats = new TableStats();
 				tableStats.setCardinality(cardinality);
 				if (getMetadataRepository(table, vdb) != null) {
 					getMetadataRepository(table, vdb).setTableStats(vdbName, vdbVersion, table, tableStats);
 				}
-				table.setCardinality(cardinality);
+				table.setTableStats(tableStats);
 				if (eventDistributor != null) {
 					eventDistributor.setTableStats(vdbName, vdbVersion, table.getParent().getName(), table.getName(), tableStats);
 				}
@@ -911,9 +1126,7 @@ public class DataTierManagerImpl implements ProcessorDataManager {
         aqr.setExceptionOnMaxRows(requestMgr.isExceptionOnMaxSourceRows());
         aqr.setPartialResults(request.supportsPartialResults());
         aqr.setSerial(requestMgr.getUserRequestSourceConcurrency() == 1);
-        if (nodeID >= 0) {
-        	aqr.setTransactionContext(workItem.getTransactionContext());
-        }
+    	aqr.setTransactionContext(workItem.getTransactionContext());
         aqr.setBufferManager(this.getBufferManager());
         if (connectorBindingId == null) {
         	VDBMetaData vdb = workItem.getDqpWorkContext().getVDB();
@@ -944,4 +1157,18 @@ public class DataTierManagerImpl implements ProcessorDataManager {
 		return this.bufferManager;
 	}
     
+	static class Trigger {
+		String name;
+		String triggerType = "INSTEAD OF"; //$NON-NLS-1$
+		String triggerEvent;
+		String status;
+		String body;
+		
+		Trigger(String name, String event, boolean status, String time, String body){
+			this.name = name;
+			this.triggerEvent = event;
+			this.status = status?"ENABLED":"DISABLED"; //$NON-NLS-1$ //$NON-NLS-2$  
+			this.body = body;
+		}
+	}    
 }

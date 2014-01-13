@@ -44,11 +44,13 @@ import org.teiid.language.SubqueryComparison.Quantifier;
 import org.teiid.language.DerivedColumn;
 import org.teiid.language.Select;
 import org.teiid.language.WindowSpecification;
+import org.teiid.metadata.Column;
 import org.teiid.metadata.Procedure;
 import org.teiid.metadata.ProcedureParameter;
 import org.teiid.query.QueryPlugin;
 import org.teiid.query.function.FunctionDescriptor;
 import org.teiid.query.metadata.QueryMetadataInterface;
+import org.teiid.query.metadata.TempMetadataID;
 import org.teiid.query.sql.lang.*;
 import org.teiid.query.sql.lang.Command;
 import org.teiid.query.sql.lang.Delete;
@@ -263,11 +265,27 @@ public class LanguageBridgeFactory {
 			if (withQueryCommand.getColumns() != null) {
 				List<ColumnReference> translatedElements = new ArrayList<ColumnReference>(withQueryCommand.getColumns().size());
 		        for (ElementSymbol es: withQueryCommand.getColumns()) {
-		            translatedElements.add(translate(es));
+		        	ColumnReference cr = translate(es);
+		            translatedElements.add(cr);
+		            if (withQueryCommand.getCommand() == null) {
+		            	//we want to convey the metadata to the source layer if possible
+		            	Object mid = es.getMetadataID();
+		            	if (mid instanceof TempMetadataID) {
+		            		TempMetadataID tid = (TempMetadataID)mid;
+		            		mid = tid.getOriginalMetadataID();
+		            	}
+		            	if (mid instanceof Column) {
+			            	cr.setMetadataObject((Column)mid);
+		            	}
+		            }
 		        }
 				item.setColumns(translatedElements);
 			}
-			item.setSubquery(translate(withQueryCommand.getCommand()));
+			if (withQueryCommand.getCommand() != null) {
+				item.setSubquery(translate(withQueryCommand.getCommand()));
+			} else {
+				item.setDependentValues(new TupleBufferList(withQueryCommand.getTupleBuffer()));
+			}
 			items.add(item);
 		}
     	result.setItems(items);
@@ -539,7 +557,9 @@ public class LanguageBridgeFactory {
         for (Iterator i = items.iterator(); i.hasNext();) {
             translatedItems.add(translate((Expression)i.next()));
         }
-        return new org.teiid.language.GroupBy(translatedItems);
+        org.teiid.language.GroupBy result = new org.teiid.language.GroupBy(translatedItems);
+        result.setRollup(groupBy.isRollup());
+        return result;
     }
 
     public org.teiid.language.OrderBy translate(OrderBy orderBy, boolean set) {

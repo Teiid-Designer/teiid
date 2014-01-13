@@ -203,7 +203,7 @@ public class CrossQueryMetadata extends BasicQueryMetadata {
     }
 
     @Override
-    public int getDistinctValues(Object elementID) throws QueryMetadataException {
+    public float getDistinctValues(Object elementID) throws QueryMetadataException {
         try {
             return spi.getDistinctValues(elementID);
         } catch (Exception ex) {
@@ -212,7 +212,7 @@ public class CrossQueryMetadata extends BasicQueryMetadata {
     }
 
     @Override
-    public int getNullValues(Object elementID) throws QueryMetadataException {
+    public float getNullValues(Object elementID) throws QueryMetadataException {
         try {
             return spi.getNullValues(elementID);
         } catch (Exception ex) {
@@ -429,7 +429,7 @@ public class CrossQueryMetadata extends BasicQueryMetadata {
     }
 
     @Override
-    public int getCardinality(Object groupID) throws QueryMetadataException {
+    public float getCardinality(Object groupID) throws QueryMetadataException {
         try {
             return spi.getCardinality(groupID);
         } catch (Exception ex) {

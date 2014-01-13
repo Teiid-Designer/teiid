@@ -446,12 +446,12 @@ public class BaseDelegatingExecutionFactory<F, C> extends ExecutionFactory<F, C>
 		return delegate.supportsArrayType();
 	}
 	@Override
-	public String getNativeQueryProcedureName() {
-		return delegate.getNativeQueryProcedureName();
-	}	
-	
-	public boolean supportsNativeQueries() {
-		return delegate.supportsNativeQueries();
+	public String getDirectQueryProcedureName() {
+		return delegate.getDirectQueryProcedureName();
+	}
+	@Override
+	public boolean supportsDirectQueryProcedure() {
+		return delegate.supportsDirectQueryProcedure();
 	}
 	@Override
 	public ProcedureExecution createDirectExecution(List<Argument> arguments,
@@ -474,5 +474,25 @@ public class BaseDelegatingExecutionFactory<F, C> extends ExecutionFactory<F, C>
 	@Override
 	public boolean supportsStringAgg() {
 		return delegate.supportsStringAgg();
+	}
+	@Override
+	public boolean supportsFullDependentJoins() {
+		return delegate.supportsFullDependentJoins();
+	}
+	@Override
+	public boolean supportsSelectWithoutFrom() {
+		return delegate.supportsSelectWithoutFrom();
+	}
+	@Override
+	public boolean supportsGroupByRollup() {
+		return delegate.supportsGroupByRollup();
+	}
+	@Override
+	public boolean supportsOrderByWithExtendedGrouping() {
+		return delegate.supportsOrderByWithExtendedGrouping();
+	}
+	@Override
+	public boolean isThreadBound() {
+		return delegate.isThreadBound();
 	}
 }

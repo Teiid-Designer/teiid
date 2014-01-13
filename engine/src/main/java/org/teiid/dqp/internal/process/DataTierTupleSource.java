@@ -101,12 +101,9 @@ public class DataTierTupleSource implements TupleSource, CompletionListener<Atom
         this.limit = limit;
     	Assertion.isNull(workItem.getConnectorRequest(aqr.getAtomicRequestID()));
         workItem.addConnectorRequest(aqr.getAtomicRequestID(), this);
-        if (!aqr.isSerial()) {
-        	addWork();
-        }
     }
 
-	private void addWork() {
+	void addWork() {
 		futureResult = workItem.addWork(new Callable<AtomicResultsMessage>() {
 			@Override
 			public AtomicResultsMessage call() throws Exception {
@@ -423,6 +420,10 @@ public class DataTierTupleSource implements TupleSource, CompletionListener<Atom
 	
 	public boolean isExplicitClose() {
 		return explicitClose;
+	}
+	
+	public Future<Void> getScheduledFuture() {
+		return scheduledFuture;
 	}
 	
 }

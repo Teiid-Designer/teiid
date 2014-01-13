@@ -49,6 +49,7 @@ import org.teiid.query.report.ReportItem;
 import org.teiid.query.resolver.QueryResolver;
 import org.teiid.query.resolver.util.ResolverUtil;
 import org.teiid.query.resolver.util.ResolverVisitor;
+import org.teiid.query.sql.lang.CacheHint;
 import org.teiid.query.sql.lang.Command;
 import org.teiid.query.sql.lang.QueryCommand;
 import org.teiid.query.sql.navigator.PreOrPostOrderNavigator;
@@ -65,17 +66,20 @@ import org.teiid.translator.TranslatorException;
 public class MetadataValidator {
 	
 	private Map<String, Datatype> typeMap;
+	private QueryParser parser;
 	
 	interface MetadataRule {
 		void execute(VDBMetaData vdb, MetadataStore vdbStore, ValidatorReport report, MetadataValidator metadataValidator);
 	}	
 	
-	public MetadataValidator(Map<String, Datatype> typeMap) {
+	public MetadataValidator(Map<String, Datatype> typeMap, QueryParser parser) {
 		this.typeMap = typeMap;
+		this.parser = parser;
 	}
 	
 	public MetadataValidator() {
 		this.typeMap = SystemMetadata.getInstance().getRuntimeTypeMap();
+		this.parser = QueryParser.getQueryParser();
 	}
 
 	public ValidatorReport validate(VDBMetaData vdb, MetadataStore store) {
@@ -207,7 +211,7 @@ public class MetadataValidator {
 								|| t.getTableType() == Table.Type.XmlStagingTable) {
 							continue;
 						}
-						if (t.isVirtual()) {
+						if (t.isVirtual() && t.getTableType() != Table.Type.TemporaryTable) {
 							if (t.getSelectTransformation() == null) {
 								metadataValidator.log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31079, t.getFullName(), model.getName()));
 							}
@@ -252,14 +256,14 @@ public class MetadataValidator {
     	try {
     		if (record instanceof Procedure) {
     			Procedure p = (Procedure)record;
-    			Command command = QueryParser.getQueryParser().parseProcedure(p.getQueryPlan(), false);
+    			Command command = parser.parseProcedure(p.getQueryPlan(), false);
     			QueryResolver.resolveCommand(command, new GroupSymbol(p.getFullName()), Command.TYPE_STORED_PROCEDURE, metadata, false);
     			resolverReport =  Validator.validate(command, metadata);
     		} else if (record instanceof Table) {
     			Table t = (Table)record;
     			
     			GroupSymbol symbol = new GroupSymbol(t.getFullName());
-    			ResolverUtil.resolveGroup(symbol, metadata);
+    			ResolverUtil.resolveGroup(symbol, metadata);    			
     			if (t.isVirtual() && (t.getColumns() == null || t.getColumns().isEmpty())) {
     				QueryCommand command = (QueryCommand)QueryParser.getQueryParser().parseCommand(t.getSelectTransformation());
     				QueryResolver.resolveCommand(command, metadata);
@@ -276,6 +280,7 @@ public class MetadataValidator {
     				}
     			}
     			
+    			boolean addCacheHint = false;
     			if (t.isMaterialized() && t.getMaterializedTable() == null) {
 	    			List<KeyRecord> fbis = t.getFunctionBasedIndexes();
 	    			List<GroupSymbol> groups = Arrays.asList(symbol);
@@ -305,9 +310,18 @@ public class MetadataValidator {
 						}
 					}
     			}
+    			else {
+    				addCacheHint = true;
+    			}
     			
     			// this seems to parse, resolve and validate.
-    			QueryResolver.resolveView(symbol, new QueryNode(t.getSelectTransformation()), SQLConstants.Reserved.SELECT, metadata);
+    			QueryNode node = QueryResolver.resolveView(symbol, new QueryNode(t.getSelectTransformation()), SQLConstants.Reserved.SELECT, metadata);
+    			CacheHint cacheHint = node.getCommand().getCacheHint();
+				Long ttl = -1L;
+				if (cacheHint != null && cacheHint.getTtl() != null && addCacheHint) {
+					ttl = cacheHint.getTtl();
+					t.setProperty("{http://www.teiid.org/ext/relational/2012}MATVIEW_TTL", String.valueOf(ttl)); //$NON-NLS-1$
+				}
     		}
 			if(resolverReport != null && resolverReport.hasItems()) {
 				for (ValidatorFailure v:resolverReport.getItems()) {
@@ -315,7 +329,7 @@ public class MetadataValidator {
 				}
 			}
 		} catch (TeiidException e) {
-			log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31080, record.getFullName(), e.getFullMessage()));
+			log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31080, record.getFullName(), e.getMessage()));
 		}
     }
 
@@ -383,6 +397,12 @@ public class MetadataValidator {
 							}
 						}
 					}
+					
+					for (KeyRecord record : t.getAllKeys()) {
+						if (record.getColumns() == null || record.getColumns().isEmpty()) {
+							metadataValidator.log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31149, t.getFullName(), record.getName()));
+						}
+					}
 						
 					List<ForeignKey> fks = t.getForeignKeys();
 					if (fks == null || fks.isEmpty()) {
@@ -390,7 +410,9 @@ public class MetadataValidator {
 					}
 					
 					for (ForeignKey fk:fks) {
-						if (fk.getPrimaryKey() != null) {
+						if (fk.getReferenceKey() != null) {
+							//ensure derived fields are set
+							fk.setReferenceKey(fk.getReferenceKey());
 							continue;
 						}
 						
@@ -400,29 +422,31 @@ public class MetadataValidator {
 							continue;
 						}
 						
-						Table referenceTable = null;
-						String referenceSchemaName = schema.getName(); 
+						
+						String referenceSchemaName = schema.getName();
+						//TODO there is an ambiguity here because we don't properly track the name parts
+						//so we have to first check for a table name that may contain .
+						Table referenceTable = schema.getTable(referenceTableName);
 						int index = referenceTableName.indexOf(Table.NAME_DELIM_CHAR);
-						if (index == -1) {
-							referenceTable = schema.getTable(referenceTableName);
-						}
-						else {
-							referenceSchemaName = referenceTableName.substring(0, index);
-							Schema referenceSchema = store.getSchema(referenceSchemaName);
-							if (referenceSchema == null) {
-								metadataValidator.log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31093, referenceSchemaName, t.getFullName()));
+						if (referenceTable == null) {
+							if (index != -1) {
+								referenceSchemaName = referenceTableName.substring(0, index);
+								Schema referenceSchema = store.getSchema(referenceSchemaName);
+								if (referenceSchema == null) {
+									metadataValidator.log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31093, referenceSchemaName, t.getFullName()));
+									continue;
+								}
+								referenceTable = referenceSchema.getTable(referenceTableName.substring(index+1));
+							}
+							if (referenceTable == null) {
+								metadataValidator.log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31092, t.getFullName(), referenceTableName.substring(index+1), referenceSchemaName));
 								continue;
 							}
-							referenceTable = referenceSchema.getTable(referenceTableName.substring(index+1));
-						}
-						
-						if (referenceTable == null) {
-							metadataValidator.log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31092, t.getFullName(), referenceTableName.substring(index+1), referenceSchemaName));
-							continue;
 						}
 
 						KeyRecord uniqueKey = null;
-						if (fk.getReferenceColumns() == null || fk.getReferenceColumns().isEmpty()) {
+						List<String> referenceColumns = fk.getReferenceColumns();
+						if (referenceColumns == null || referenceColumns.isEmpty()) {
 							if (referenceTable.getPrimaryKey() == null) {
 								metadataValidator.log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31094, t.getFullName(), referenceTableName.substring(index+1), referenceSchemaName));
 							}
@@ -432,21 +456,20 @@ public class MetadataValidator {
 							
 						} else {
 							for (KeyRecord record : referenceTable.getUniqueKeys()) {
-								if (keyMatches(fk.getReferenceColumns(), record)) {
+								if (keyMatches(referenceColumns, record)) {
 									uniqueKey = record;
 									break;
 								}
 							}
-							if (uniqueKey == null && referenceTable.getPrimaryKey() != null && keyMatches(fk.getReferenceColumns(), referenceTable.getPrimaryKey())) {
+							if (uniqueKey == null && referenceTable.getPrimaryKey() != null && keyMatches(referenceColumns, referenceTable.getPrimaryKey())) {
 								uniqueKey = referenceTable.getPrimaryKey();
 							}
 						}
 						if (uniqueKey == null) {
-							metadataValidator.log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31095, t.getFullName(), referenceTableName.substring(index+1), referenceSchemaName, fk.getReferenceColumns()));
+							metadataValidator.log(report, model, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31095, t.getFullName(), referenceTableName.substring(index+1), referenceSchemaName, referenceColumns));
 						}
 						else {
-							fk.setPrimaryKey(uniqueKey);
-							fk.setUniqueKeyID(uniqueKey.getUUID());
+							fk.setReferenceKey(uniqueKey);
 						}
 					}
 				}						

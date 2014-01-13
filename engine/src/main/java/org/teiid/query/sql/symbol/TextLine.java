@@ -165,7 +165,7 @@ public class TextLine implements Expression, ITextLine<LanguageVisitor> {
 		ArrayList<String> result = new ArrayList<String>();
 		for (Iterator<T> iterator = values.iterator(); iterator.hasNext();) {
 			T t = iterator.next();
-			String text = DataTypeManager.transformValue(valueExtractor.getValue(t), DataTypeManager.DefaultDataClasses.STRING);
+			String text = (String)DataTypeManager.transformValue(valueExtractor.getValue(t), DataTypeManager.DefaultDataClasses.STRING);
 			if (text == null) {
 				continue;
 			}

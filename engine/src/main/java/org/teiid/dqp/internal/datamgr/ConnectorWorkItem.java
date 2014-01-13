@@ -70,6 +70,7 @@ import org.teiid.query.metadata.TempMetadataAdapter;
 import org.teiid.query.metadata.TempMetadataStore;
 import org.teiid.query.sql.lang.Command;
 import org.teiid.query.sql.lang.QueryCommand;
+import org.teiid.query.sql.lang.SourceHint;
 import org.teiid.query.sql.lang.StoredProcedure;
 import org.teiid.query.sql.symbol.Expression;
 import org.teiid.resource.spi.WrappedConnection;
@@ -102,7 +103,7 @@ public class ConnectorWorkItem implements ConnectorWork {
 	private org.teiid.language.Command translatedCommand;
 	
 	private DataNotAvailableException dnae;
-	
+    
     private FileStore lobStore;
     private byte[] lobBuffer;
     private boolean[] convertToRuntimeType;
@@ -115,7 +116,6 @@ public class ConnectorWorkItem implements ConnectorWork {
 	private boolean areLobsUsableAfterClose;
 	
 	private TeiidException conversionError;
-    
     ConnectorWorkItem(AtomicRequestMessage message, ConnectorManager manager) throws TeiidComponentException {
         this.id = message.getAtomicRequestID();
         this.requestMsg = message;
@@ -126,8 +126,11 @@ public class ConnectorWorkItem implements ConnectorWork {
                 Integer.toString(requestID.getNodeID()),
                 Integer.toString(requestID.getExecutionId())
                 );
-        this.securityContext.setGeneralHint(message.getGeneralHint());
-        this.securityContext.setHint(message.getHint());
+        SourceHint hint = message.getCommand().getSourceHint();
+        if (hint != null) {
+	        this.securityContext.setGeneralHints(hint.getGeneralHints());
+	        this.securityContext.setHints(hint.getSpecificHint(message.getConnectorName()).getHints());
+        }
         this.securityContext.setBatchSize(this.requestMsg.getFetchSize());
         this.securityContext.setSession(requestMsg.getWorkContext().getSession());
         
@@ -136,6 +139,7 @@ public class ConnectorWorkItem implements ConnectorWork {
     	QueryMetadataInterface qmi = vdb.getAttachment(QueryMetadataInterface.class);
         qmi = new TempMetadataAdapter(qmi, new TempMetadataStore());
         this.queryMetadata = new RuntimeMetadataImpl(qmi);
+        this.securityContext.setRuntimeMetadata(this.queryMetadata);
 		this.securityContext.setTransactional(requestMsg.isTransactional());
         LanguageBridgeFactory factory = new LanguageBridgeFactory(this.queryMetadata);
         factory.setConvertIn(!this.connector.supportsInCriteria());
@@ -199,12 +203,12 @@ public class ConnectorWorkItem implements ConnectorWork {
     }
     
     public synchronized void close() {
+    	lobBuffer = null;
+    	lobStore = null; //can still be referenced by lobs and will be cleaned-up by reference
     	if (!manager.removeState(this.id)) {
     		return; //already closed
     	}
-    	lobBuffer = null;
-    	lobStore = null; //can still be referenced by lobs and will be cleaned-up by reference
-        LogManager.logDetail(LogConstants.CTX_CONNECTOR, new Object[] {this.id, "Processing Close :", this.requestMsg.getCommand()}); //$NON-NLS-1$
+    	LogManager.logDetail(LogConstants.CTX_CONNECTOR, new Object[] {this.id, "Processing Close :", this.requestMsg.getCommand()}); //$NON-NLS-1$
     	if (!error) {
             manager.logSRCCommand(this.requestMsg, this.securityContext, Event.END, this.rowCount);
         }
@@ -385,6 +389,7 @@ public class ConnectorWorkItem implements ConnectorWork {
             	if (this.procedureBatchHandler != null) {
             		row = this.procedureBatchHandler.padRow(row);
             	}
+            	
             	this.rowCount += 1;
             	batchSize++;
             	rows.add(row);
@@ -417,7 +422,7 @@ public class ConnectorWorkItem implements ConnectorWork {
         		if (row != null) {
         			try {
 						row = correctTypes(row);
-	        			rows.add(row);
+        			rows.add(row);
 	        			this.rowCount += 1;
 					} catch (TeiidException e) {
 						lastBatch = false;
@@ -451,7 +456,7 @@ public class ConnectorWorkItem implements ConnectorWork {
 		} 
 		return response;
 	}
-    
+
     public static AtomicResultsMessage createResultsMessage(List<?>[] batch) {
         return new AtomicResultsMessage(batch);
     }    
@@ -469,7 +474,7 @@ public class ConnectorWorkItem implements ConnectorWork {
 	public boolean isDataAvailable() {
 		return this.securityContext.isDataAvailable();
 	}
-		
+	
 	@Override
 	public CacheDirective getCacheDirective() throws TranslatorException {
 		CacheDirective cd = connector.getCacheDirective(this.translatedCommand, this.securityContext, this.queryMetadata);
@@ -480,6 +485,11 @@ public class ConnectorWorkItem implements ConnectorWork {
 	@Override
 	public boolean isForkable() {
 		return this.connector.isForkable();
+	}
+	
+	@Override
+	public boolean isThreadBound() {
+		return this.connector.isThreadBound();
 	}
 	
 	private List<?> correctTypes(List row) throws TransformationException, TeiidComponentException {

@@ -297,9 +297,49 @@ public class DataTypeManager {
 	private static Transform getTransformFromMaps(String srcType,
 			String targetType) {
 		Map<String, Transform> innerMap = transforms.get(srcType);
+		boolean found = false;
 		if (innerMap != null) {
-			return innerMap.get(targetType);
+			Transform result = innerMap.get(targetType);
+			if (result != null) {
+				return result;
+			}
+			found = true;
 		}
+		if (srcType.equals(targetType)) {
+			return null;
+		}
+		if (DataTypeManager.DefaultDataTypes.OBJECT.equals(targetType)) {
+			return AnyToObjectTransform.INSTANCE;
+		}
+		if (srcType.equals(DefaultDataTypes.NULL)) {
+			return NullToAnyTransform.INSTANCE;
+		}
+		if (srcType.equals(DefaultDataTypes.OBJECT)) {
+			return ObjectToAnyTransform.INSTANCE;
+		}
+		if (found) {
+			//built-in type
+			return null;
+		}
+		int sourceDims = 0;
+		while (isArrayType(srcType)) {
+			srcType = srcType.substring(0, srcType.length() - 2);
+			sourceDims++;
+		}
+		int targetDims = 0;
+		while(isArrayType(targetType)) {
+			targetType = targetType.substring(0, targetType.length() - 2);
+			targetDims++;
+		}
+		//go from typed[] to object[]
+		if (DataTypeManager.DefaultDataTypes.OBJECT.equals(targetType) && targetDims <= sourceDims) {
+			return AnyToObjectTransform.INSTANCE;
+		}
+		//go from object[] to typed[]
+		if (DataTypeManager.DefaultDataTypes.OBJECT.equals(srcType) && targetDims >= sourceDims) {
+			return ObjectToAnyTransform.INSTANCE;
+		}
+		//TODO: will eventually allow integer[] to long[], etc.
 		return null;
 	}
 
@@ -537,9 +577,11 @@ public class DataTypeManager {
 					result.add(entry.getKey());
 				}
 			}
+			result.add(DefaultDataTypes.OBJECT);
 			return;
 		}
 		String previous = DataTypeManager.DefaultDataTypes.OBJECT;
+		result.add(previous);
 		while (isArrayType(type)) {
 			previous += ARRAY_SUFFIX;
 			result.add(previous);
@@ -787,16 +829,6 @@ public class DataTypeManager {
 		
 		DataTypeManager.addTransform(new org.teiid.core.types.basic.SQLXMLToStringTransform());
 		
-		for (Class<?> type : getAllDataTypeClasses()) {
-			if (type != DefaultDataClasses.OBJECT) {
-				DataTypeManager.addTransform(new AnyToObjectTransform(type));
-				DataTypeManager.addTransform(new ObjectToAnyTransform(type));
-			} 
-			if (type != DefaultDataClasses.NULL) {
-				DataTypeManager.addTransform(new NullToAnyTransform(type));
-			}
-		}
-		
 		DataTypeManager.addTransform(new AnyToStringTransform(DefaultDataClasses.OBJECT) {
 			@Override
 			public boolean isExplicit() {
@@ -827,6 +859,9 @@ public class DataTypeManager {
 			}
 			if (java.util.Date.class.isAssignableFrom(c)) {
 				return new Timestamp(((java.util.Date)value).getTime());				
+			}
+			if (Object[].class.isAssignableFrom(c)) {
+				return new ArrayImpl((Object[])value);
 			}
 		}
 		if (Clob.class.isAssignableFrom(c)) {
@@ -869,20 +904,18 @@ public class DataTypeManager {
 		return DefaultDataClasses.OBJECT; // "object type"
 	}
 
-	@SuppressWarnings("unchecked")
-	public static <T> T transformValue(Object value, Class<T> targetClass)
+	public static Object transformValue(Object value, Class<?> targetClass)
 			throws TransformationException {
 		if (value == null) {
-			return (T)value;
+			return value;
 		}
 		return transformValue(value, value.getClass(), targetClass);
 	}
 
-	@SuppressWarnings("unchecked")
-	public static <T> T transformValue(Object value, Class<?> sourceType,
-			Class<T> targetClass) throws TransformationException {
+	public static Object transformValue(Object value, Class<?> sourceType,
+			Class<?> targetClass) throws TransformationException {
 		if (value == null || sourceType == targetClass || DefaultDataClasses.OBJECT == targetClass) {
-			return (T) value;
+			return value;
 		}
 		Transform transform = DataTypeManager.getTransform(sourceType,
 				targetClass);
@@ -890,7 +923,7 @@ public class DataTypeManager {
             Object[] params = new Object[] { sourceType, targetClass, value};
               throw new TransformationException(CorePlugin.Event.TEIID10076, CorePlugin.Util.gs(CorePlugin.Event.TEIID10076, params));
 		}
-		T result = (T) transform.transform(value);
+		Object result = transform.transform(value, targetClass);
 		return getCanonicalValue(result);
 	}
 	

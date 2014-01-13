@@ -83,8 +83,7 @@ public final class RuleCollapseSource implements OptimizerRule {
             if(nonRelationalPlan != null) {
                 accessNode.setProperty(NodeConstants.Info.PROCESSOR_PLAN, nonRelationalPlan);
             } else if (RuleRaiseAccess.getModelIDFromAccess(accessNode, metadata) == null) {
-            	//with query
-            	accessNode.setProperty(NodeConstants.Info.IS_COMMON_TABLE, Boolean.TRUE);
+            	//with query or processor plan alreay set
             } else if(command == null) {
             	PlanNode commandRoot = accessNode;
             	GroupSymbol intoGroup = (GroupSymbol)accessNode.getFirstChild().getProperty(NodeConstants.Info.INTO_GROUP);
@@ -95,6 +94,8 @@ public final class RuleCollapseSource implements OptimizerRule {
                 QueryCommand queryCommand = createQuery(context, capFinder, accessNode, commandRoot);
             	addDistinct(metadata, capFinder, accessNode, queryCommand);
                 command = queryCommand;
+                queryCommand.setSourceHint((SourceHint) accessNode.getProperty(Info.SOURCE_HINT));
+                queryCommand.getProjectedQuery().setSourceHint((SourceHint) accessNode.getProperty(Info.SOURCE_HINT));
                 if (intoGroup != null) {
                 	Insert insertCommand = (Insert)commandRoot.getParent().getProperty(NodeConstants.Info.VIRTUAL_COMMAND);
                 	if (insertCommand == null) {
@@ -259,9 +260,15 @@ public final class RuleCollapseSource implements OptimizerRule {
 	        ExpressionMappingVisitor.mapExpressions(query.getSelect(), symbolMap.asMap()); 
 	        ExpressionMappingVisitor.mapExpressions(query.getHaving(), symbolMap.asMap()); 
 	
-			if (!CapabilitiesUtil.supports(Capability.QUERY_FUNCTIONS_IN_GROUP_BY, modelID, metadata, capFinder)) {
+	        if (!CapabilitiesUtil.supports(Capability.QUERY_FUNCTIONS_IN_GROUP_BY, modelID, metadata, capFinder)) {
 				//if group by expressions are not support, add an inline view to compensate
-				query = RuleCollapseSource.rewriteGroupByExpressionsAsView(query, metadata);
+				query = RuleCollapseSource.rewriteGroupByAsView(query, metadata, false);
+			}
+			if (query.getOrderBy() != null 
+					&& groupNode.hasBooleanProperty(Info.ROLLUP) 
+					&& !CapabilitiesUtil.supports(Capability.QUERY_ORDERBY_EXTENDED_GROUPING, modelID, metadata, capFinder)) {
+				//if ordering is not directly supported over extended grouping, add an inline view to compensate
+				query = RuleCollapseSource.rewriteGroupByAsView(query, metadata, true);
 			}
 		}
 		return query;
@@ -370,12 +377,12 @@ public final class RuleCollapseSource implements OptimizerRule {
             }
             case NodeConstants.Types.SOURCE:
             {
-            	if (Boolean.TRUE.equals(node.getProperty(NodeConstants.Info.INLINE_VIEW))) {
+            	GroupSymbol symbol = node.getGroups().iterator().next();
+            	if (node.hasBooleanProperty(Info.INLINE_VIEW)) {
                     PlanNode child = node.getFirstChild();
                     QueryCommand newQuery = createQuery(context, capFinder, accessRoot, child);
                     
                     //ensure that the group is consistent
-                    GroupSymbol symbol = node.getGroups().iterator().next();
                     SubqueryFromClause sfc = new SubqueryFromClause(symbol, newQuery);
                     query.getFrom().addClause(sfc);
                     //ensure that the column names are consistent
@@ -402,8 +409,17 @@ public final class RuleCollapseSource implements OptimizerRule {
                     	}
                     }
                     return;
-                } 
-                query.getFrom().addGroup(node.getGroups().iterator().next());
+                }
+            	PlanNode subPlan = (PlanNode) node.getProperty(Info.SUB_PLAN);
+            	if (subPlan != null) {
+            		Map<GroupSymbol, PlanNode> subPlans = (Map<GroupSymbol, PlanNode>) accessRoot.getProperty(Info.SUB_PLANS);
+            		if (subPlans == null) {
+            			subPlans = new HashMap<GroupSymbol, PlanNode>();
+            			accessRoot.setProperty(Info.SUB_PLANS, subPlans);
+            		}
+            		subPlans.put(symbol, subPlan);
+            	}
+                query.getFrom().addGroup(symbol);
                 break;
             }
     	}
@@ -439,6 +455,9 @@ public final class RuleCollapseSource implements OptimizerRule {
                 List groups = (List) node.getProperty(NodeConstants.Info.GROUP_COLS);
                 if(groups != null && !groups.isEmpty()) {
                     query.setGroupBy(new GroupBy(groups));
+                    if (node.hasBooleanProperty(Info.ROLLUP)) {
+                    	query.getGroupBy().setRollup(true);
+                    }
                 }
                 break;
             }
@@ -657,28 +676,32 @@ public final class RuleCollapseSource implements OptimizerRule {
    		return "CollapseSource"; //$NON-NLS-1$
    	}
 
-	public static Query rewriteGroupByExpressionsAsView(Query query, QueryMetadataInterface metadata) {
+	public static Query rewriteGroupByAsView(Query query, QueryMetadataInterface metadata, boolean addViewForOrderBy) {
 		if (query.getGroupBy() == null) {
 			return query;
 		}
-	    // we check for group by expressions here to create an ANSI SQL plan
-	    boolean hasExpression = false;
-	    for (final Iterator<Expression> iterator = query.getGroupBy().getSymbols().iterator(); !hasExpression && iterator.hasNext();) {
-	        hasExpression = !(iterator.next() instanceof ElementSymbol);
-	    } 
-	    if (!hasExpression) {
-	    	return query;
-	    }
+		if (!addViewForOrderBy) {
+		    // we check for group by expressions here to create an ANSI SQL plan
+		    boolean hasExpression = false;
+		    for (final Iterator<Expression> iterator = query.getGroupBy().getSymbols().iterator(); !hasExpression && iterator.hasNext();) {
+		        hasExpression = !(iterator.next() instanceof ElementSymbol);
+		    } 
+		    if (!hasExpression) {
+		    	return query;
+		    }
+		}
 		Select select = query.getSelect();
-	    GroupBy groupBy = query.getGroupBy();
-	    query.setGroupBy(null);
+		GroupBy groupBy = query.getGroupBy();
+	    if (!addViewForOrderBy) {
+	    	query.setGroupBy(null);
+		}
 	    Criteria having = query.getHaving();
 	    query.setHaving(null);
 	    OrderBy orderBy = query.getOrderBy();
 	    query.setOrderBy(null);
 	    Limit limit = query.getLimit();
 	    query.setLimit(null);
-	    Set<Expression> newSelectColumns = new HashSet<Expression>();
+	    Set<Expression> newSelectColumns = new LinkedHashSet<Expression>();
 	    for (final Iterator<Expression> iterator = groupBy.getSymbols().iterator(); iterator.hasNext();) {
 	        newSelectColumns.add(iterator.next());
 	    }
@@ -706,10 +729,14 @@ public final class RuleCollapseSource implements OptimizerRule {
 	    Iterator<Expression> iter = outerQuery.getSelect().getProjectedSymbols().iterator();
 	    HashMap<Expression, Expression> expressionMap = new HashMap<Expression, Expression>();
 	    for (Expression symbol : query.getSelect().getProjectedSymbols()) {
-	        expressionMap.put(SymbolMap.getExpression(symbol), iter.next());
+	    	//need to unwrap on both sides as the select expression could be aliased
+	    	//TODO: could add an option to createInlineViewQuery to disable alias creation
+	        expressionMap.put(SymbolMap.getExpression(symbol), SymbolMap.getExpression(iter.next()));
 	    }
-	    ExpressionMappingVisitor.mapExpressions(groupBy, expressionMap);
-	    outerQuery.setGroupBy(groupBy);
+	    if (!addViewForOrderBy) {
+		    ExpressionMappingVisitor.mapExpressions(groupBy, expressionMap);
+		    outerQuery.setGroupBy(groupBy);
+	    }
 	    ExpressionMappingVisitor.mapExpressions(having, expressionMap);
 	    outerQuery.setHaving(having);
 	    ExpressionMappingVisitor.mapExpressions(orderBy, expressionMap);

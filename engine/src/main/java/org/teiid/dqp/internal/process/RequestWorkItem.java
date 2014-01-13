@@ -441,19 +441,19 @@ public class RequestWorkItem extends AbstractWorkItem implements PrioritizedRunn
 			}
 		}
 		if (this.transactionState == TransactionState.ACTIVE) {
-			/*
-			 * TEIID-14 if we are done producing batches, then proactively close transactional 
-			 * executions even ones that were intentionally kept alive. this may 
-			 * break the read of a lob from a transactional source under a transaction 
-			 * if the source does not support holding the clob open after commit
-			 */
-        	for (DataTierTupleSource connectorRequest : getConnectorRequests()) {
-        		if (connectorRequest.isTransactional()) {
-        			connectorRequest.fullyCloseSource();
-        		}
-            }
 			this.transactionState = TransactionState.DONE;
 			if (transactionContext.getTransactionType() == TransactionContext.Scope.REQUEST) {
+				/*
+				 * TEIID-14 if we are done producing batches, then proactively close transactional 
+				 * executions even ones that were intentionally kept alive. this may 
+				 * break the read of a lob from a transactional source under a transaction 
+				 * if the source does not support holding the clob open after commit
+				 */
+	        	for (DataTierTupleSource connectorRequest : getConnectorRequests()) {
+	        		if (connectorRequest.isTransactional()) {
+	        			connectorRequest.fullyCloseSource();
+	        		}
+	            }
 				this.transactionService.commit(transactionContext);
 			} else {
 				suspend();
@@ -614,6 +614,7 @@ public class RequestWorkItem extends AbstractWorkItem implements PrioritizedRunn
 			
 			int maxRows = 0;
 			
+			@Override
 			protected void flushBatchDirect(TupleBatch batch, boolean add) throws TeiidComponentException,TeiidProcessingException {
 				resultsBuffer = getTupleBuffer();
 				if (maxRows == 0) {
@@ -634,14 +635,20 @@ public class RequestWorkItem extends AbstractWorkItem implements PrioritizedRunn
 						return;
 					}
 					super.flushBatchDirect(batch, add);
-					if (!add) {
-						if (!processor.hasBuffer(false)) {
-							resultsBuffer.setRowCount(batch.getEndRow());
+					if (!add && !processor.hasBuffer(false)) {
+						resultsBuffer.setRowCount(batch.getEndRow());
+					}
+					if (transactionState != TransactionState.ACTIVE && (requestMsg.getRequestOptions().isContinuous() || (useCallingThread && isForwardOnly()))) {
+			        	synchronized (this) {
+							if (resultsReceiver == null) {
+					        	throw BlockedException.block(requestID, "Blocking to allow asynch processing"); //$NON-NLS-1$            	
+							}
 						}
-						if ((requestMsg.getRequestOptions().isContinuous() || useCallingThread) && resultsReceiver == null) {
-				        	throw BlockedException.block(requestID, "Blocking to allow asynch processing"); //$NON-NLS-1$            	
-				        }
-					} else if (isForwardOnly() && add 
+			        	if (add) {
+			        		throw new AssertionError("Should not add batch to buffer"); //$NON-NLS-1$
+			        	}
+			        }
+					if (isForwardOnly() && add 
 							&& !processor.hasBuffer(false) //restrict the buffer size for forward only results
 							&& !batch.getTerminationFlag() 
 							&& transactionState != TransactionState.ACTIVE
@@ -678,10 +685,10 @@ public class RequestWorkItem extends AbstractWorkItem implements PrioritizedRunn
 				}
 			}
 		};
-		if (!request.addedLimit && this.requestMsg.getRowLimit() > 0 && !request.isReturingParams()) {
+		if (!request.addedLimit && this.requestMsg.getRowLimit() > 0 && this.requestMsg.getRowLimit() < Integer.MAX_VALUE) {
 			//covers maxrows for commands that already have a limit, are prepared, or are a stored procedure
-			//TODO: allow max rows to have an effect for callablestatements with out params
         	this.collector.setRowLimit(this.requestMsg.getRowLimit());
+    		this.collector.setSaveLastRow(request.isReturingParams());
         }
 		this.resultsBuffer = collector.getTupleBuffer();
 		if (this.resultsBuffer == null) {
@@ -730,8 +737,8 @@ public class RequestWorkItem extends AbstractWorkItem implements PrioritizedRunn
     	CachedResults cr = new CachedResults();
     	cr.setCommand(originalCommand);
         cr.setResults(resultsBuffer, processor.getProcessorPlan());
-        if (requestMsg.getRowLimit() > 0 && resultsBuffer.getRowCount() == requestMsg.getRowLimit()) {
-        	cr.setRowLimit(resultsBuffer.getRowCount());
+        if (requestMsg.getRowLimit() > 0 && resultsBuffer.getRowCount() == requestMsg.getRowLimit() + (collector.isSaveLastRow()?1:0)) {
+        	cr.setRowLimit(requestMsg.getRowLimit());
         }
         if (originalCommand.getCacheHint() != null) {
         	LogManager.logDetail(LogConstants.CTX_DQP, requestID, "Using cache hint", originalCommand.getCacheHint()); //$NON-NLS-1$
@@ -766,6 +773,12 @@ public class RequestWorkItem extends AbstractWorkItem implements PrioritizedRunn
 		boolean result = true;
 		synchronized (this) {
 			if (this.resultsReceiver == null) {
+				if (this.transactionState != TransactionState.ACTIVE && (requestMsg.getRequestOptions().isContinuous() || (useCallingThread && isForwardOnly()))) {
+					if (batch != null) {
+						throw new AssertionError("batch has no handler"); //$NON-NLS-1$
+					}
+		        	throw BlockedException.block(requestID, "Blocking until client is ready"); //$NON-NLS-1$            	
+		        }
 				return result;
 			}
 			if (!this.requestMsg.getRequestOptions().isContinuous()) {

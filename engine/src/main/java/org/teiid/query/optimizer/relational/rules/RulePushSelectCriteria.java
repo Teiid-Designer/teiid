@@ -170,6 +170,19 @@ public final class RulePushSelectCriteria implements OptimizerRule {
 		if (critNode.hasBooleanProperty(NodeConstants.Info.IS_HAVING)) {
 			return false;
 		}
+		if (sourceNode.hasBooleanProperty(Info.ROLLUP)) {
+			//there is a pre/post affect.  we can push, but then there is
+			//null filtering that may need to occur
+			//the more complicated approach would be to determine the effective null tests,
+			//but instead we'll just clone the node
+			if (inPlan) {
+				PlanNode copy = copyNode(critNode);
+				critNode.setProperty(Info.IS_PUSHED, true);
+				critNode.setProperty(Info.IS_HAVING, true);
+				critNode.getFirstChild().addAsParent(copy);	
+				critNode = copy;
+			}
+		}
 		boolean moved = false;
 		SymbolMap symbolMap = (SymbolMap) sourceNode.getProperty(NodeConstants.Info.SYMBOL_MAP);
 		FrameUtil.convertNode(critNode, null, null, symbolMap.asMap(), metadata, true);
@@ -435,6 +448,9 @@ public final class RulePushSelectCriteria implements OptimizerRule {
                     if (!RuleRaiseAccess.canRaiseOverSelect(currentNode, metadata, capFinder, critNode, null)) {
                         return currentNode;
                     }
+                    if (!RuleRaiseAccess.checkConformedSubqueries(currentNode, critNode, this.createdNodes == null)) {
+                    	return currentNode;
+                    }
                     if (this.createdNodes == null) {
                     	satisfyConditions(critNode, currentNode, metadata);
                     }
@@ -538,7 +554,9 @@ public final class RulePushSelectCriteria implements OptimizerRule {
 		List<DependentSetCriteria> crits = new ArrayList<DependentSetCriteria>(attributes.size());
 		for (int i = 0; i < attributes.size(); i++) {
 			DependentSetCriteria.AttributeComparison comp = attributes.get(i);
-			crits.add(RuleChooseDependent.createDependentSetCriteria(dsc.getContextSymbol(), Arrays.asList(comp)));
+			DependentSetCriteria crit = RuleChooseDependent.createDependentSetCriteria(dsc.getContextSymbol(), Arrays.asList(comp));
+			crit.setMakeDepOptions(dsc.getMakeDepOptions());
+			crits.add(crit);
 		}
 		return crits;
 	}

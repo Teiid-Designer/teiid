@@ -41,13 +41,56 @@ public interface Admin {
      *
      * @param vdbName Name of the VDB
      * @param vdbVersion Version of the VDB
-     * @param modelName  Name of the Model to map Connection Factory
-     * @param sourceName sourceName for the model
+     * @param modelName  Name of the Model
+     * @param sourceName source name
+     * @param translatorName
+     * @param dsName data source name that can found in the JNDI map.
+     * @throws AdminException
+     * @deprecated
+     */
+    @Deprecated
+	void assignToModel(String vdbName, int vdbVersion, String modelName, String sourceName, String translatorName, String dsName) throws AdminException;
+    
+    /**
+     * Removes a {@link Translator} and Data source from a {@link VDB}'s Model
+     *
+     * @param vdbName Name of the VDB
+     * @param vdbVersion Version of the VDB
+     * @param modelName  Name of the Model
+     * @param sourceName source name
+     * @throws AdminException
+     */
+	void removeSource(String vdbName, int vdbVersion, String modelName,
+			String sourceName)
+			throws AdminException;
+
+    /**
+     * Adds a {@link Translator} and Data source to a {@link VDB}'s Model
+     *
+     * @param vdbName Name of the VDB
+     * @param vdbVersion Version of the VDB
+     * @param modelName  Name of the Model
+     * @param sourceName source name
      * @param translatorName
      * @param dsName data source name that can found in the JNDI map.
      * @throws AdminException
      */
-    void assignToModel(String vdbName, int vdbVersion, String modelName, String sourceName, String translatorName, String dsName) throws AdminException;
+	void addSource(String vdbName, int vdbVersion, String modelName,
+			String sourceName, String translatorName, String dsName)
+			throws AdminException;
+
+    /**
+     * Update a source's {@link Translator} and Data source
+     *
+     * @param vdbName Name of the VDB
+     * @param vdbVersion Version of the VDB
+     * @param sourceName source name
+     * @param translatorName
+     * @param dsName data source name that can found in the JNDI map.
+     * @throws AdminException
+     */
+	void updateSource(String vdbName, int vdbVersion, String sourceName,
+			String translatorName, String dsName) throws AdminException;
 
     /**
      * Change the {@link ConnectionType} of the {@link VDB}.
@@ -63,8 +106,6 @@ public interface Admin {
      * @param deployName  Name of the VDB file to save under
      * @param content
      * @throws AdminException
-     *
-     * @return the {@link VDB} representing the current property values and runtime state.
      */
     public void deploy(String deployName, InputStream content) throws AdminException;
 
@@ -165,6 +206,14 @@ public interface Admin {
      */
     Collection<? extends PropertyDefinition> getTemplatePropertyDefinitions(String templateName) throws AdminException;
 
+    /**
+     * Get all of the available configuration Properties for the specified translator
+     * @param translatorName - Name of the translator
+     * @return
+     * @throws AdminException
+     */
+    Collection<? extends PropertyDefinition> getTranslatorPropertyDefinitions(String translatorName) throws AdminException;
+    
 
     /**
      * Get all transaction matching the identifier.

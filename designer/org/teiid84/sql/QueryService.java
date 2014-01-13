@@ -13,7 +13,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
 import org.teiid.core.types.JDBCSQLTypeInfo;
 import org.teiid.designer.query.IProcedureService;
 import org.teiid.designer.query.IQueryFactory;
@@ -47,7 +46,6 @@ import org.teiid.language.SQLConstants;
 import org.teiid.metadata.FunctionMethod;
 import org.teiid.metadata.FunctionMethod.Determinism;
 import org.teiid.metadata.FunctionParameter;
-import org.teiid.query.function.FunctionDescriptor;
 import org.teiid.query.function.FunctionLibrary;
 import org.teiid.query.function.FunctionTree;
 import org.teiid.query.function.SystemFunctionManager;
@@ -170,8 +168,7 @@ public class QueryService implements IQueryService {
                 functionTrees.put(descriptor.getSchema(), tree);
             }
 
-            FunctionDescriptor fd = tree.addFunction(descriptor.getSchema(), null, fMethod, false);
-            fd.setMetadataID(descriptor.getMetadataID());
+            tree.addFunction(descriptor.getSchema(), null, fMethod, false);
         }
 
         /*

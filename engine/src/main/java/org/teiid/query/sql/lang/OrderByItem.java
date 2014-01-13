@@ -26,7 +26,10 @@ import org.teiid.designer.query.sql.lang.IOrderByItem;
 import org.teiid.language.SortSpecification.NullOrdering;
 import org.teiid.query.sql.LanguageObject;
 import org.teiid.query.sql.LanguageVisitor;
+import org.teiid.query.sql.symbol.Constant;
 import org.teiid.query.sql.symbol.Expression;
+import org.teiid.query.sql.symbol.ExpressionSymbol;
+import org.teiid.query.sql.symbol.Symbol;
 import org.teiid.query.sql.visitor.SQLStringVisitor;
 
 public class OrderByItem implements LanguageObject, IOrderByItem<Expression, LanguageVisitor> {
@@ -39,7 +42,7 @@ public class OrderByItem implements LanguageObject, IOrderByItem<Expression, Lan
 	private NullOrdering nullOrdering;
 
 	public OrderByItem(Expression symbol, boolean ascending) {
-		this.symbol = symbol;
+		setSymbol(symbol);
 		this.ascending = ascending;
 	}
 	
@@ -64,6 +67,9 @@ public class OrderByItem implements LanguageObject, IOrderByItem<Expression, Lan
 	}
 
 	public void setSymbol(Expression symbol) {
+		if (symbol != null && !(symbol instanceof Symbol) && !(symbol instanceof Constant)) {
+			symbol = new ExpressionSymbol("expr", symbol); //$NON-NLS-1$
+		}
 		this.symbol = symbol;
 	}
 	

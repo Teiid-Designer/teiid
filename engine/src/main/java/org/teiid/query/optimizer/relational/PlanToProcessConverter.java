@@ -23,10 +23,10 @@
 package org.teiid.query.optimizer.relational;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -41,10 +41,7 @@ import org.teiid.core.TeiidComponentException;
 import org.teiid.core.TeiidProcessingException;
 import org.teiid.core.TeiidRuntimeException;
 import org.teiid.core.id.IDGenerator;
-import org.teiid.core.types.DataTypeManager;
 import org.teiid.core.util.Assertion;
-import org.teiid.dqp.internal.process.multisource.MultiSourceElementReplacementVisitor;
-import org.teiid.language.SQLConstants.NonReserved;
 import org.teiid.designer.query.sql.lang.ISetQuery.Operation;
 import org.teiid.metadata.FunctionMethod.Determinism;
 import org.teiid.query.QueryPlugin;
@@ -73,8 +70,6 @@ import org.teiid.query.sql.lang.*;
 import org.teiid.query.sql.lang.ObjectTable.ObjectColumn;
 import org.teiid.query.sql.lang.SourceHint.SpecificHint;
 import org.teiid.query.sql.lang.XMLTable.XMLColumn;
-import org.teiid.query.sql.navigator.PreOrPostOrderNavigator;
-import org.teiid.query.sql.symbol.AggregateSymbol;
 import org.teiid.query.sql.symbol.Constant;
 import org.teiid.query.sql.symbol.ElementSymbol;
 import org.teiid.query.sql.symbol.Expression;
@@ -352,17 +347,17 @@ public class PlanToProcessConverter {
                         aNode = new AccessNode(getID());
                         processNode = aNode;
                                                 
-                        ev = EvaluatableVisitor.needsEvaluation(command);
-                        aNode.setShouldEvaluateExpressions(ev.requiresEvaluation(EvaluationLevel.PROCESSING));
                     }
-                    //-- special handling for temp tables. currently they cannot perform projection
+                    //-- special handling for system tables. currently they cannot perform projection
                     try {
-                        if (command instanceof Query) {
+                    	if (command instanceof Query) {
                             processNode = correctProjectionInternalTables(node, aNode);
                         }
                     } catch (QueryMetadataException err) {
-                         throw new TeiidComponentException(QueryPlugin.Event.TEIID30248, err);
+                        throw new TeiidComponentException(QueryPlugin.Event.TEIID30248, err);
                     }
+                    ev = EvaluatableVisitor.needsEvaluation(command, modelID, metadata, capFinder);
+                    aNode.setShouldEvaluateExpressions(ev.requiresEvaluation(EvaluationLevel.PROCESSING));
                     setRoutingName(aNode, node, command);
                     if (command instanceof QueryCommand) {
 	                    try {
@@ -372,7 +367,7 @@ public class PlanToProcessConverter {
 	                        boolean aliasColumns = modelID != null && (CapabilitiesUtil.supports(Capability.QUERY_SELECT_EXPRESSION, modelID, metadata, capFinder)
 	                        		|| CapabilitiesUtil.supports(Capability.QUERY_FROM_INLINE_VIEWS, modelID, metadata, capFinder));
 	                        AliasGenerator visitor = new AliasGenerator(aliasGroups, !aliasColumns);
-	                        SourceHint sh = context.getSourceHint();
+	                        SourceHint sh = command.getSourceHint();
                         	if (sh != null && aliasGroups) {
                         		VDBMetaData vdb = context.getDQPWorkContext().getVDB();
                             	ModelMetaData model = vdb.getModel(aNode.getModelName());
@@ -396,21 +391,22 @@ public class PlanToProcessConverter {
 	                    }
                     }
                     aNode.setCommand(command);
-                    //TODO: move multisource handling to a processing concern
-                    //also it makes more sense to allow the multisource affect to be elevated above just access nodes
+                    Map<GroupSymbol, PlanNode> subPlans = (Map<GroupSymbol, PlanNode>) node.getProperty(Info.SUB_PLANS);
+                    
+                    //it makes more sense to allow the multisource affect to be elevated above just access nodes
                     if (aNode.getModelId() != null && metadata.isMultiSource(aNode.getModelId())) {
                 		VDBMetaData vdb = context.getVdb();
-                        ModelMetaData model = vdb.getModel(aNode.getModelName());
-                        List<String> sources = model.getSourceNames();
                         aNode.setShouldEvaluateExpressions(true); //forces a rewrite
                         aNode.setElements( (List) node.getProperty(NodeConstants.Info.OUTPUT_COLS) );
                     	if (node.hasBooleanProperty(Info.IS_MULTI_SOURCE)) {
-                    		processNode = multiSourceModify(aNode, sources);
+                    		Expression ex = rewriteMultiSourceCommand(aNode.getCommand());
+                    		aNode.setConnectorBindingExpression(ex);
+                    		aNode.setMultiSource(true);
                     	} else {
                     		String sourceName = (String)node.getProperty(Info.SOURCE_NAME);
                     		aNode.setConnectorBindingExpression(new Constant(sourceName));
                     	}
-                    } else {
+                    } else if (subPlans == null){
 	                    if (!aNode.isShouldEvaluate()) {
 	                    	aNode.minimizeProject(command);
 	                    }
@@ -419,6 +415,22 @@ public class PlanToProcessConverter {
 	                    	checkForSharedSourceCommand(aNode);
 	                    }
                     }
+    				if (subPlans != null) {
+    					QueryCommand qc = (QueryCommand)command;
+    					if (qc.getWith() == null) {
+    						qc.setWith(new ArrayList<WithQueryCommand>(subPlans.size()));
+    					}
+    					Map<GroupSymbol, RelationalPlan> plans = new LinkedHashMap<GroupSymbol, RelationalPlan>();
+    					for (Map.Entry<GroupSymbol, PlanNode> entry : subPlans.entrySet()) {
+    						RelationalPlan subPlan = convert(entry.getValue());
+    						List<ElementSymbol> elems = ResolverUtil.resolveElementsInGroup(entry.getKey(), metadata);
+    						subPlan.setOutputElements(elems);
+    						plans.put(entry.getKey(), subPlan);
+    						WithQueryCommand withQueryCommand = new WithQueryCommand(entry.getKey(), elems, null);
+							qc.getWith().add(withQueryCommand);
+    					}
+    					aNode.setSubPlans(plans);
+    				}
                 }
                 break;
 
@@ -451,6 +463,7 @@ public class PlanToProcessConverter {
 				break;
 			case NodeConstants.Types.GROUP:
 				GroupingNode gnode = new GroupingNode(getID());
+				gnode.setRollup(node.hasBooleanProperty(Info.ROLLUP));
 				SymbolMap groupingMap = (SymbolMap)node.getProperty(NodeConstants.Info.SYMBOL_MAP);
 				gnode.setOutputMapping(groupingMap);
 				gnode.setRemoveDuplicates(node.hasBooleanProperty(NodeConstants.Info.IS_DUP_REMOVAL));
@@ -663,7 +676,6 @@ public class PlanToProcessConverter {
         ProjectNode pnode = new ProjectNode(getID());
   
         pnode.setSelectSymbols(projectSymbols);
-        //if the following cast fails it means that we have a dependent temp table - that is not yet possible
         aNode = (AccessNode)prepareToAdd(node, aNode);
         node.setProperty(NodeConstants.Info.OUTPUT_COLS, projectSymbols);
         pnode.addChild(aNode);
@@ -711,108 +723,12 @@ public class PlanToProcessConverter {
 			String cbName = metadata.getFullName(modelID);
 			accessNode.setModelName(cbName);
 			accessNode.setModelId(modelID);
+			accessNode.setConformedTo((Set<Object>) node.getProperty(Info.CONFORMED_SOURCES));
 		} catch(QueryMetadataException e) {
              throw new QueryPlannerException(QueryPlugin.Event.TEIID30251, e, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30251));
 		}
 	}
 	
-	private RelationalNode multiSourceModify(AccessNode accessNode, List<String> sourceNames) throws TeiidComponentException, TeiidProcessingException {
-        List<AccessNode> accessNodes = new ArrayList<AccessNode>();
-        
-        boolean hasOutParams = false;
-        if (accessNode.getCommand() instanceof StoredProcedure) {
-        	StoredProcedure sp = (StoredProcedure)accessNode.getCommand();
-        	hasOutParams = sp.returnParameters() && sp.getProjectedSymbols().size() > sp.getResultSetColumns().size();
-        }
-        Expression ex = rewriteMultiSourceCommand(accessNode.getCommand());
-        if (!Constant.NULL_CONSTANT.equals(ex)) {
-        	if (ex != null) {
-        		accessNode.setConnectorBindingExpression(ex);
-        		return accessNode;
-        	}
-        		
-            for(String sourceName:sourceNames) {
-                
-                // Modify the command to pull the instance column and evaluate the criteria
-            	Command command = accessNode.getCommand();
-            	if (!(command instanceof Insert || command instanceof StoredProcedure)) {
-                	command = (Command)command.clone();
-                	PreOrPostOrderNavigator.doVisit(command, new MultiSourceElementReplacementVisitor(sourceName, metadata), PreOrPostOrderNavigator.PRE_ORDER, false);
-            		if (!RelationalNodeUtil.shouldExecute(command, false, true)) {
-            			continue;
-                    }
-            	}
-                
-                // Create a new cloned version of the access node and set it's model name to be the bindingUUID
-                AccessNode instanceNode = (AccessNode) accessNode.clone();
-                instanceNode.setElements(accessNode.getElements());
-                instanceNode.setID(getID());
-                instanceNode.setCommand(command);
-                accessNodes.add(instanceNode);
-                
-                if (accessNodes.size() > 1 && command instanceof Insert) {
-                	throw new AssertionError("Multi-source insert must target a single source.  Should have been caught in validation"); //$NON-NLS-1$
-                }
-
-                instanceNode.setConnectorBindingId(sourceName);
-            }
-        }
-        
-        if (hasOutParams && accessNodes.size() != 1) {
-        	throw new QueryPlannerException(QueryPlugin.Event.TEIID30561, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID30561, accessNode.getCommand()));
-        }
-        
-        switch(accessNodes.size()) {
-            case 0: 
-            {
-                if (RelationalNodeUtil.isUpdate(accessNode.getCommand())) {
-                	//should return a 0 update count
-                	ProjectNode pnode = new ProjectNode(getID());
-                	pnode.setSelectSymbols(Arrays.asList(new Constant(0)));
-                	return pnode;
-                }
-                // Replace existing access node with a NullNode
-                NullNode nullNode = new NullNode(getID());
-                return nullNode;         
-            }
-            case 1: 
-            {
-                // Replace existing access node with new access node (simplified command)
-                return accessNodes.get(0);
-            }
-            default:
-            {
-            	UnionAllNode unionNode = new UnionAllNode(getID());
-            	unionNode.setElements(accessNode.getElements());
-                for (AccessNode newNode : accessNodes) {
-                	unionNode.addChild(newNode);
-                }
-            	
-            	RelationalNode parent = unionNode;
-            	
-                // More than 1 access node - replace with a union
-            	if (RelationalNodeUtil.isUpdate(accessNode.getCommand())) {
-            		GroupingNode groupNode = new GroupingNode(getID());
-            		AggregateSymbol sumCount = new AggregateSymbol(NonReserved.SUM, false, accessNode.getElements().get(0));          		
-            		groupNode.setElements(Arrays.asList(sumCount));
-            		groupNode.addChild(unionNode);
-            		
-            		ProjectNode projectNode = new ProjectNode(getID());
-            		
-            		Expression intSum = ResolverUtil.getConversion(sumCount, DataTypeManager.getDataTypeName(sumCount.getType()), DataTypeManager.DefaultDataTypes.INTEGER, false, metadata.getFunctionLibrary());
-            		
-            		List<Expression> outputElements = Arrays.asList(intSum);             		
-            		projectNode.setElements(outputElements);
-            		projectNode.setSelectSymbols(outputElements);
-            		projectNode.addChild(groupNode);
-            		
-            		parent = projectNode;
-            	}
-                return parent;
-            }
-        }
-    }
-
 	private Expression rewriteMultiSourceCommand(Command command) throws TeiidComponentException {
 		Expression result = null;
 		if (command instanceof StoredProcedure) {

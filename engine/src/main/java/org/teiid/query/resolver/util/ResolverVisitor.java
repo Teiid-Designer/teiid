@@ -30,7 +30,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-
 import org.teiid.api.exception.query.InvalidFunctionException;
 import org.teiid.api.exception.query.QueryMetadataException;
 import org.teiid.api.exception.query.QueryResolverException;
@@ -40,7 +39,6 @@ import org.teiid.core.TeiidComponentException;
 import org.teiid.core.types.DataTypeManager;
 import org.teiid.core.types.DataTypeManager.DefaultDataClasses;
 import org.teiid.core.util.StringUtil;
-import org.teiid.designer.query.sql.symbol.IAggregateSymbol.Type;
 import org.teiid.designer.query.sql.symbol.IElementSymbol.DisplayMode;
 import org.teiid.designer.udf.IFunctionLibrary;
 import org.teiid.query.QueryPlugin;
@@ -52,10 +50,32 @@ import org.teiid.query.metadata.QueryMetadataInterface;
 import org.teiid.query.metadata.TempMetadataID;
 import org.teiid.query.sql.LanguageObject;
 import org.teiid.query.sql.LanguageVisitor;
-import org.teiid.query.sql.lang.*;
+import org.teiid.query.sql.lang.BetweenCriteria;
+import org.teiid.query.sql.lang.CompareCriteria;
+import org.teiid.query.sql.lang.ExpressionCriteria;
+import org.teiid.query.sql.lang.GroupContext;
+import org.teiid.query.sql.lang.IsNullCriteria;
+import org.teiid.query.sql.lang.MatchCriteria;
+import org.teiid.query.sql.lang.SetClause;
+import org.teiid.query.sql.lang.SetCriteria;
+import org.teiid.query.sql.lang.SubqueryCompareCriteria;
+import org.teiid.query.sql.lang.SubquerySetCriteria;
 import org.teiid.query.sql.navigator.PostOrderNavigator;
 import org.teiid.query.sql.proc.ExceptionExpression;
-import org.teiid.query.sql.symbol.*;
+import org.teiid.query.sql.symbol.AggregateSymbol;
+import org.teiid.query.sql.symbol.Array;
+import org.teiid.query.sql.symbol.CaseExpression;
+import org.teiid.query.sql.symbol.Constant;
+import org.teiid.query.sql.symbol.DerivedColumn;
+import org.teiid.query.sql.symbol.ElementSymbol;
+import org.teiid.query.sql.symbol.Expression;
+import org.teiid.query.sql.symbol.Function;
+import org.teiid.query.sql.symbol.GroupSymbol;
+import org.teiid.query.sql.symbol.QueryString;
+import org.teiid.query.sql.symbol.Reference;
+import org.teiid.query.sql.symbol.SearchedCaseExpression;
+import org.teiid.query.sql.symbol.XMLQuery;
+import org.teiid.query.sql.symbol.XMLSerialize;
 
 
 public class ResolverVisitor extends LanguageVisitor {
@@ -63,16 +83,6 @@ public class ResolverVisitor extends LanguageVisitor {
     public static final String TEIID_PASS_THROUGH_TYPE = "teiid:pass-through-type"; //$NON-NLS-1$
 	private static final String SYS_PREFIX = CoreConstants.SYSTEM_MODEL + '.';
 
-    private static ThreadLocal<Boolean> determinePartialName = new ThreadLocal<Boolean>() {
-    	protected Boolean initialValue() {
-    		return false;
-    	}
-    };
-    
-    public static void setFindShortName(boolean enabled) {
-    	determinePartialName.set(enabled);
-    }
-    
     private Collection<GroupSymbol> groups;
     private GroupContext externalContext;
     protected QueryMetadataInterface metadata;
@@ -82,6 +92,7 @@ public class ResolverVisitor extends LanguageVisitor {
     private boolean findShortName;
     private List<ElementSymbol> matches = new ArrayList<ElementSymbol>(2);
     private List<GroupSymbol> groupMatches = new ArrayList<GroupSymbol>(2);
+	private boolean hasUserDefinedAggregate;
     
     /**
      * Constructor for ResolveElementsVisitor.
@@ -92,7 +103,7 @@ public class ResolverVisitor extends LanguageVisitor {
         this.groups = internalGroups;
         this.externalContext = externalContext;
         this.metadata = metadata;
-        this.findShortName = determinePartialName.get();
+        this.findShortName = metadata.findShortName();
     }
 
 	public void setGroups(Collection<GroupSymbol> groups) {
@@ -224,7 +235,9 @@ public class ResolverVisitor extends LanguageVisitor {
         elementSymbol.setMetadataID(resolvedSymbol.getMetadataID());
         elementSymbol.setGroupSymbol(resolvedGroup);
         elementSymbol.setShortName(resolvedSymbol.getShortName());
-        elementSymbol.setOutputName(oldName);
+        if (metadata.useOutputName()) {
+        	elementSymbol.setOutputName(oldName);
+        }
         return true;
 	}
     
@@ -303,6 +316,9 @@ public class ResolverVisitor extends LanguageVisitor {
     public void visit(Function obj) {
         try {
             resolveFunction(obj, this.metadata.getFunctionLibrary());
+            if (obj.isAggregate()) {
+            	hasUserDefinedAggregate = true;
+            }
         } catch(QueryResolverException e) {
         	if (QueryPlugin.Event.TEIID30069.name().equals(e.getCode()) || QueryPlugin.Event.TEIID30067.name().equals(e.getCode())) {
 	        	if (unresolvedFunctions == null) {
@@ -325,16 +341,24 @@ public class ResolverVisitor extends LanguageVisitor {
 	    		for (int i = 0; i < array.getExpressions().size(); i++) {
 	    			Expression expr = array.getExpressions().get(i);
 	    			setDesiredType(expr, array.getComponentType(), array);
-	    			array.getExpressions().set(i, ResolverUtil.convertExpression(expr, type, metadata));
+	    			if (array.getComponentType() != DefaultDataClasses.OBJECT) {
+	    				array.getExpressions().set(i, ResolverUtil.convertExpression(expr, type, metadata));
+	    			}
 	    		}
 	    	} else {
-	    		String[] types = new String[array.getExpressions().size()];
+	    		Class<?> type = null;
 	    		for (int i = 0; i < array.getExpressions().size(); i++) {
 	    			Expression expr = array.getExpressions().get(i);
-	    			types[i] = DataTypeManager.getDataTypeName(expr.getType());
+	    			if (type == null) {
+	    				type = expr.getType();
+	    			} else if (type != expr.getType()) {
+	    				type = DataTypeManager.DefaultDataClasses.OBJECT;
+	    			}
 	    		}
-	    		String commonType = ResolverUtil.getCommonType(types);
-	    		array.setComponentType(DataTypeManager.getDataTypeClass(commonType));
+	    		if (type == null) {
+	    			type = DataTypeManager.DefaultDataClasses.OBJECT;
+	    		}
+	    		array.setComponentType(type);
 	    	}
     	} catch (QueryResolverException e) {
     		handleException(e);
@@ -629,8 +653,17 @@ public class ResolverVisitor extends LanguageVisitor {
 			ResolverUtil.ResolvedLookup lookup = ResolverUtil.resolveLookup(function, metadata);
 			fd = library.copyFunctionChangeReturnType(fd, lookup.getReturnElement().getType());
 	    } else if (fd.isSystemFunction(IFunctionLibrary.FunctionName.ARRAY_GET) && args[0].getType().isArray()) {
-	    	//hack to use typed array values
-			fd = library.copyFunctionChangeReturnType(fd, args[0].getType().getComponentType());
+			if (args[0].getType().isArray()) {
+	    		//hack to use typed array values
+				fd = library.copyFunctionChangeReturnType(fd, args[0].getType().getComponentType());
+	    	} else {
+	    		if (function.getType() != null) {
+	    			setDesiredType(args[0], function.getType(), function);
+	    		}
+	    		if (args[0].getType() != DataTypeManager.DefaultDataClasses.OBJECT) {
+	    			throw new QueryResolverException(QueryPlugin.Event.TEIID31145, QueryPlugin.Util.gs(QueryPlugin.Event.TEIID31145, DataTypeManager.getDataTypeName(args[0].getType()), function));
+	    		}
+	    	}
 	    } else if (Boolean.valueOf(fd.getMethod().getProperty(TEIID_PASS_THROUGH_TYPE, false))) {
 	    	//hack largely to support pg
 	    	fd = library.copyFunctionChangeReturnType(fd, args[0].getType());
@@ -1098,6 +1131,10 @@ public class ResolverVisitor extends LanguageVisitor {
 	    ResolverVisitor elementsVisitor = new ResolverVisitor(metadata, groups, externalContext);
 	    PostOrderNavigator.doVisit(obj, elementsVisitor);
 	    elementsVisitor.throwException(true);
+	}
+	
+	public boolean hasUserDefinedAggregate() {
+		return hasUserDefinedAggregate;
 	}
     
 }

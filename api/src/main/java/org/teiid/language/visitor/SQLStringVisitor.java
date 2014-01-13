@@ -52,7 +52,9 @@ public class SQLStringVisitor extends AbstractLanguageVisitor {
 	
     private Set<String> infixFunctions = new HashSet<String>(Arrays.asList("%", "+", "-", "*", "+", "/", "||", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$ 
     		"&", "|", "^", "#"));   //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ 
-	
+
+    private static Pattern pattern = Pattern.compile("\\$+\\d+"); //$NON-NLS-1$
+    
     protected static final String UNDEFINED = "<undefined>"; //$NON-NLS-1$
     protected static final String UNDEFINED_PARAM = "?"; //$NON-NLS-1$
     
@@ -447,7 +449,14 @@ public class SQLStringVisitor extends AbstractLanguageVisitor {
               .append(Tokens.SPACE)
               .append(BY)
               .append(Tokens.SPACE);
+        if (obj.isRollup()) {
+        	buffer.append(ROLLUP);
+        	buffer.append(Tokens.LPAREN);
+        }
         append(obj.getElements());
+        if (obj.isRollup()) {
+        	buffer.append(Tokens.RPAREN);
+        }
     }
 
     public void visit(In obj) {
@@ -698,7 +707,7 @@ public class SQLStringVisitor extends AbstractLanguageVisitor {
     }
 
     public void visit(Argument obj) {
-        buffer.append(obj.getArgumentValue());
+        visitNode(obj.getExpression());
     }
 
     public void visit(Select obj) {
@@ -932,7 +941,11 @@ public class SQLStringVisitor extends AbstractLanguageVisitor {
     	buffer.append(AS);
     	buffer.append(Tokens.SPACE);
 		buffer.append(Tokens.LPAREN);
-		append(obj.getSubquery());
+		if (obj.getSubquery() == null) {
+			buffer.append(UNDEFINED_PARAM);
+		} else {
+			append(obj.getSubquery());
+		}
 		buffer.append(Tokens.RPAREN);
     }
     
@@ -970,6 +983,9 @@ public class SQLStringVisitor extends AbstractLanguageVisitor {
     public void visit(Array array) {
     	buffer.append(Tokens.LPAREN);
     	append(array.getExpressions());
+    	if (array.getExpressions().size() == 1) {
+    		buffer.append(Tokens.COMMA);
+    	}
     	buffer.append(Tokens.RPAREN);
     }
  
@@ -999,7 +1015,6 @@ public class SQLStringVisitor extends AbstractLanguageVisitor {
     }
     
 	public static void parseNativeQueryParts(String nativeQuery, List<Argument> list, StringBuilder stringBuilder, Substitutor substitutor) {
-		Pattern pattern = Pattern.compile("\\$+\\d+"); //$NON-NLS-1$
 		Matcher m = pattern.matcher(nativeQuery);
 		for (int i = 0; i < nativeQuery.length();) {
 			if (!m.find(i)) {

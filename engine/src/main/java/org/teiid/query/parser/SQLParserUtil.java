@@ -234,7 +234,17 @@ public class SQLParserUtil {
 	private static Pattern SOURCE_HINT = Pattern.compile("\\s*sh(\\s+KEEP ALIASES)?\\s*(?::((?:'[^']*')+))?\\s*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL); //$NON-NLS-1$
 	private static Pattern SOURCE_HINT_ARG = Pattern.compile("\\s*([^: ]+)(\\s+KEEP ALIASES)?\\s*:((?:'[^']*')+)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL); //$NON-NLS-1$
 	
-	SourceHint getSourceHint(Token t) {
+	SourceHint getSourceHint(SQLParser parser) {
+		int index = 1; 
+		//scan for the first keyword
+	    Token t = null;
+	    do {
+	    	t = parser.getToken(index++);
+	    } while (t != null && t.kind == SQLParserConstants.LPAREN);
+	    t = parser.getToken(index);
+	    if (t == null) {
+	    	return null;
+	    }
 		String comment = getComment(t);
 		Matcher matcher = SOURCE_HINT.matcher(comment);
 		if (!matcher.find()) {
@@ -255,6 +265,16 @@ public class SQLParserUtil {
 			sourceHint.setSourceHint(matcher.group(1), normalizeStringLiteral(matcher.group(3)), matcher.group(2) != null);
 		}
 		return sourceHint;
+	}
+	
+	void setSourceHint(SourceHint sourceHint, Command command) {
+	    if (sourceHint != null) {
+	        if (command instanceof SetQuery) {
+	        	((SetQuery)command).getProjectedQuery().setSourceHint(sourceHint);
+	        } else {
+	    		command.setSourceHint(sourceHint);
+	    	}
+	    }
 	}
 	
 	boolean isNonStrictHint(Token t) {
@@ -336,6 +356,11 @@ public class SQLParserUtil {
     		c.setRadix(Integer.parseInt(v));
     	}
     	
+    	v = props.remove(DDLConstants.NATIVE_TYPE);
+    	if (v != null) {
+    		c.setNativeType(v);
+    	}
+    	
     	if (c instanceof Column) {
     		setColumnOptions((Column)c, props);
     	}
@@ -349,9 +374,9 @@ public class SQLParserUtil {
 		
     	if (key.equals(DDLConstants.RADIX)) {
     		c.setRadix(0);
-    	}
-    	
-    	if (c instanceof Column) {
+    	} else if (key.equals(DDLConstants.NATIVE_TYPE)) {
+    		c.setNativeType(null);
+    	} else if (c instanceof Column) {
     		removeColumnOption(key, (Column)c);
     	}
     }    
@@ -359,57 +384,29 @@ public class SQLParserUtil {
     private void removeColumnOption(String key, Column c) {
         if (key.equals(DDLConstants.CASE_SENSITIVE)) {
         	c.setCaseSensitive(false);
-        }
-    	
-    	if (key.equals(DDLConstants.SELECTABLE)) {
+        } else if (key.equals(DDLConstants.SELECTABLE)) {
     		c.setSelectable(true);
-    	}
-    	
-    	if (key.equals(DDLConstants.UPDATABLE)) {
+    	} else if (key.equals(DDLConstants.UPDATABLE)) {
     		c.setUpdatable(false);
-    	}
-    	
-    	if (key.equals(DDLConstants.SIGNED)) {
+    	} else if (key.equals(DDLConstants.SIGNED)) {
     		c.setSigned(false);
-    	}
-    	
-    	if (key.equals(DDLConstants.CURRENCY)) {
+    	} else if (key.equals(DDLConstants.CURRENCY)) {
     		c.setSigned(false);
-    	}
-
-    	if (key.equals(DDLConstants.FIXED_LENGTH)) {
+    	} else if (key.equals(DDLConstants.FIXED_LENGTH)) {
     		c.setFixedLength(false);
-    	}
-    	
-    	if (key.equals(DDLConstants.SEARCHABLE)) {
+    	} else if (key.equals(DDLConstants.SEARCHABLE)) {
     		c.setSearchType(null);
-    	}
-    	
-    	if (key.equals(DDLConstants.MIN_VALUE)) {
+    	} else if (key.equals(DDLConstants.MIN_VALUE)) {
     		c.setMinimumValue(null);
-    	}
-    	
-    	if (key.equals(DDLConstants.MAX_VALUE)) {
+    	} else if (key.equals(DDLConstants.MAX_VALUE)) {
     		c.setMaximumValue(null);
-    	}
-    	
-    	if (key.equals(DDLConstants.CHAR_OCTET_LENGTH)) {
+    	} else if (key.equals(DDLConstants.CHAR_OCTET_LENGTH)) {
     		c.setCharOctetLength(0);
-    	}
-        
-    	if (key.equals(DDLConstants.NATIVE_TYPE)) {
-    		c.setNativeType(null);
-    	}
-
-    	if (key.equals(DDLConstants.NULL_VALUE_COUNT)) {
+    	} else if (key.equals(DDLConstants.NULL_VALUE_COUNT)) {
     		c.setNullValues(-1);
-    	}
-    	
-    	if (key.equals(DDLConstants.DISTINCT_VALUES)) {
+    	} else if (key.equals(DDLConstants.DISTINCT_VALUES)) {
     		c.setDistinctValues(-1);
-    	}
-
-    	if (key.equals(DDLConstants.UDT)) {
+    	} else if (key.equals(DDLConstants.UDT)) {
 			c.setDatatype(null);
 			c.setLength(0);
 			c.setPrecision(0);
@@ -468,11 +465,6 @@ public class SQLParserUtil {
     		c.setCharOctetLength(Integer.parseInt(v));
     	}
         
-    	v = props.remove(DDLConstants.NATIVE_TYPE);
-    	if (v != null) {
-    		c.setNativeType(v);
-    	}
-
     	v = props.remove(DDLConstants.NULL_VALUE_COUNT); 
     	if (v != null) {
     		c.setNullValues(Integer.parseInt(v));
@@ -519,13 +511,9 @@ public class SQLParserUtil {
 	void removeCommonProperty(String key, AbstractMetadataRecord c) {
 		if (key.equals(DDLConstants.UUID)) {
 			c.setUUID(null);
-		}
-		
-    	if (key.equals(DDLConstants.ANNOTATION)) {
+		} else if (key.equals(DDLConstants.ANNOTATION)) {
     		c.setAnnotation(null);
-    	}
-		
-		if (key.equals(DDLConstants.NAMEINSOURCE)) {
+    	} else if (key.equals(DDLConstants.NAMEINSOURCE)) {
 			c.setNameInSource(null);
 		}
 	}	
@@ -553,7 +541,7 @@ public class SQLParserUtil {
 		
     	value = props.remove(DDLConstants.CARDINALITY); 
     	if (value != null) {
-    		table.setCardinality(Integer.parseInt(value));
+			table.setCardinality(Long.valueOf(value));
     	}
     }     
     
@@ -821,6 +809,16 @@ public class SQLParserUtil {
 	MetadataFactory getTempMetadataFactory() {
 		DQPWorkContext workContext = DQPWorkContext.getWorkContext();
 		return workContext.getTempMetadataFactory();
+	}
+	
+	List<Expression> arrayExpressions(List<Expression> expressions, Expression expr) {
+		if (expressions == null) {
+			expressions = new ArrayList<Expression>();
+		}
+		if (expr != null) {
+			expressions.add(expr);
+		}
+		return expressions;
 	}
 	
 	static class  ParsedDataType{

@@ -64,7 +64,7 @@ public class BasicQueryMetadataWrapper implements QueryMetadataInterface {
 		return actualMetadata.getBinaryVDBResource(resourcePath);
 	}
 
-	public int getCardinality(Object groupID)
+	public float getCardinality(Object groupID)
 			throws TeiidComponentException, QueryMetadataException {
 		return actualMetadata.getCardinality(groupID);
 	}
@@ -84,7 +84,7 @@ public class BasicQueryMetadataWrapper implements QueryMetadataInterface {
 		return actualMetadata.getDeletePlan(groupID);
 	}
 
-	public int getDistinctValues(Object elementID)
+	public float getDistinctValues(Object elementID)
 			throws TeiidComponentException, QueryMetadataException {
 		return actualMetadata.getDistinctValues(elementID);
 	}
@@ -209,7 +209,7 @@ public class BasicQueryMetadataWrapper implements QueryMetadataInterface {
 		return actualMetadata.getNativeType(elementID);
 	}
 
-	public int getNullValues(Object elementID)
+	public float getNullValues(Object elementID)
 			throws TeiidComponentException, QueryMetadataException {
 		return actualMetadata.getNullValues(elementID);
 	}
@@ -429,6 +429,16 @@ public class BasicQueryMetadataWrapper implements QueryMetadataInterface {
 	public String getExtensionProperty(Object metadataID, String key,
 			boolean checkUnqualified) {
 		return actualMetadata.getExtensionProperty(metadataID, key, checkUnqualified);
+	}
+	
+	@Override
+	public boolean findShortName() {
+		return actualMetadata.findShortName();
+	}
+	
+	@Override
+	public boolean useOutputName() {
+		return actualMetadata.useOutputName();
 	}
 	
 }

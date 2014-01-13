@@ -98,7 +98,7 @@ public class AliasSymbol extends Symbol
 	public AliasSymbol clone() {
 		Expression symbolCopy = (Expression) this.symbol.clone();
 		AliasSymbol result = new AliasSymbol(getName(), getShortName(), symbolCopy);
-		result.setOutputName(this.getOutputName());
+		result.outputName = this.outputName;
 		return result;
 	}
 	
