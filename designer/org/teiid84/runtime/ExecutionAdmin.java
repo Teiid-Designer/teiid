@@ -51,6 +51,8 @@ import org.teiid.designer.runtime.spi.ITeiidServer;
 import org.teiid.designer.runtime.spi.ITeiidTranslator;
 import org.teiid.designer.runtime.spi.ITeiidVdb;
 import org.teiid.designer.runtime.spi.TeiidPropertyDefinition;
+import org.teiid.designer.runtime.version.spi.ITeiidServerVersion;
+import org.teiid.designer.runtime.version.spi.TeiidServerVersion;
 import org.teiid.jdbc.TeiidDriver;
 import org.teiid.logging.LogManager;
 
@@ -656,7 +658,12 @@ public class ExecutionAdmin implements IExecutionAdmin {
     protected void refreshTranslators( Collection<? extends Translator> translators ) throws Exception {
         for (Translator translator : translators) {
             if (translator.getName() != null) {
-                Collection<? extends PropertyDefinition> propDefs = this.admin.getTemplatePropertyDefinitions(translator.getName());
+                Collection<? extends PropertyDefinition> propDefs = null;
+                if( teiidServer.getServerVersion().isLessThan(TeiidServerVersion.TEIID_8_6_SERVER)) {
+                	propDefs = this.admin.getTemplatePropertyDefinitions(translator.getName());
+                } else {
+                	propDefs = this.admin.getTranslatorPropertyDefinitions(translator.getName());
+                }
                 this.translatorByNameMap.put(translator.getName(), new TeiidTranslator(translator, propDefs, teiidServer));
             }
         }
