@@ -337,7 +337,7 @@ public class SQLParserUtil {
         return setQuery;
     }
     
-    static Block asBlock(Statement stmt) {
+    public static Block asBlock(Statement stmt) {
     	if (stmt == null) {
     		return null;
     	}

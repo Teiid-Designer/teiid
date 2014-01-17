@@ -40,7 +40,8 @@ Require-Bundle: org.jdom;bundle-version="[1.1.1,2.0.0)",
  org.eclipse.datatools.connectivity;bundle-version="[1.2.5,2.0.0)",
  org.eclipse.datatools.connectivity.ui;bundle-version="[1.2.4,2.0.0)",
  org.jboss.ide.eclipse.as.core;bundle-version="[2.4.0,3.0.0)",
- org.jboss.ide.eclipse.as.management.core;bundle-version="[2.4.0,3.0.0)"
+ org.jboss.ide.eclipse.as.management.core;bundle-version="[2.4.0,3.0.0)",
+ org.junit;bundle-version="4.11.0"
 Bundle-Localization: plugin
 Import-Package: javax.sql,
  javax.sql.rowset,
@@ -50,3 +51,6 @@ Import-Package: javax.sql,
 Bundle-RequiredExecutionEnvironment: JavaSE-1.6
 Bundle-Activator: org.teiid84.TeiidRuntimePlugin
 Bundle-ActivationPolicy: lazy
+Export-Package: org.teiid.query.parser,
+ org.teiid.query.sql.lang,
+ org.teiid.query.sql.proc
