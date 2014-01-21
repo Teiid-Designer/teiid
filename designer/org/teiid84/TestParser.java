@@ -139,6 +139,7 @@ public class TestParser {
 		try {
 			actualCommand = QueryParser.getQueryParser().parseCommand(sql, info);
 			actualString = actualCommand.toString();
+			expectedString = expectedCommand.toString();
 		} catch(Throwable e) { 
 		    fail(e.getMessage());
 		}
@@ -662,7 +663,7 @@ public class TestParser {
 		From from = new From();
 		from.addGroup(g);
 
-		Function f = new Function("replace", new Expression[] {new ElementSymbol("a", false), new Constant("x"), new Constant("y")}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+		Function f = new Function("REPLACE", new Expression[] {new ElementSymbol("a", false), new Constant("x"), new Constant("y")}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 		AliasSymbol as = new AliasSymbol("y", f); //$NON-NLS-1$
 		Select select = new Select();
 		select.addSymbol(as);
@@ -3087,10 +3088,7 @@ public class TestParser {
         
         Select select = new Select();
         select.addSymbol(new ElementSymbol("x.a")); //$NON-NLS-1$
-        
-        Query query = new Query();
-        query.setSelect(select);
-        query.setFrom(from);
+
         helpTest("exec proc1('param1')", "EXEC proc1('param1')", storedQuery); //$NON-NLS-1$ //$NON-NLS-2$
     }    
     
@@ -3959,8 +3957,8 @@ public class TestParser {
         CreateProcedureCommand virtualProcedureCommand = new CreateProcedureCommand();
         virtualProcedureCommand.setBlock(block);
         
-        helpTest("BEGIN DECLARE integer x; LOOP ON (SELECT c1, c2 FROM m.g) AS mycursor BEGIN x=mycursor.c1; IF(x > 5) BEGIN CONTINUE; END END SELECT c1, c2 FROM m.g; END", //$NON-NLS-1$
-        "BEGIN\nDECLARE integer x;\n" //$NON-NLS-1$
+        helpTest("CREATE VIRTUAL PROCEDURE BEGIN DECLARE integer x; LOOP ON (SELECT c1, c2 FROM m.g) AS mycursor BEGIN x=mycursor.c1; IF(x > 5) BEGIN CONTINUE; END END SELECT c1, c2 FROM m.g; END", //$NON-NLS-1$
+        "CREATE VIRTUAL PROCEDURE\nBEGIN\nDECLARE integer x;\n" //$NON-NLS-1$
         + "LOOP ON (SELECT c1, c2 FROM m.g) AS mycursor\nBEGIN\n" //$NON-NLS-1$
         + "x = mycursor.c1;\nIF(x > 5)\nBEGIN\nCONTINUE;\nEND\nEND\n" //$NON-NLS-1$
         + "SELECT c1, c2 FROM m.g;\nEND", virtualProcedureCommand); //$NON-NLS-1$
@@ -5038,7 +5036,7 @@ public class TestParser {
         Query query = new Query();
         query.setSelect(new Select(Arrays.asList(new MultipleElementSymbol())));
         ArrayTable tt = new ArrayTable();
-        tt.setArrayValue(new Constant(null, DataTypeManager.DefaultDataClasses.OBJECT));
+        tt.setArrayValue(new Constant(null, DataTypeManager.DefaultDataClasses.NULL));
         List<TableFunctionReference.ProjectedColumn> columns = new ArrayList<TableFunctionReference.ProjectedColumn>();
         columns.add(new TableFunctionReference.ProjectedColumn("x", "string"));
         columns.add(new TableFunctionReference.ProjectedColumn("y", "date"));
@@ -5143,7 +5141,7 @@ public class TestParser {
     	AssignmentStatement assigStmt =	new AssignmentStatement(new ElementSymbol("a"), new Constant(new Integer(1))); //$NON-NLS-1$
     	RaiseStatement errStmt =	new RaiseStatement(new Constant("My Error")); //$NON-NLS-1$
     	Block b = new Block();
-    	b.setExceptionGroup("g");
+    	b.setExceptionGroup("e");
     	b.addStatement(cmdStmt);
     	b.addStatement(assigStmt);
     	b.addStatement(errStmt, true);

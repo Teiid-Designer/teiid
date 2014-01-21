@@ -22,6 +22,7 @@
 
 package org.teiid.query.sql.symbol;
 
+import org.teiid.core.util.EquivalenceUtil;
 import org.teiid.core.util.HashCodeUtil;
 import org.teiid.designer.query.sql.symbol.IElementSymbol;
 import org.teiid.query.sql.LanguageVisitor;
@@ -99,6 +100,10 @@ public class ElementSymbol extends Symbol
     	if (other.groupSymbol == null) {
         	return super.equals(obj);
     	}
+    	
+    	if (! EquivalenceUtil.areEqual(type, other.type))
+    	    return false;
+
     	return this.groupSymbol.equals(other.groupSymbol) && this.getShortName().equals(other.getShortName());
     }
     
