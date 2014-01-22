@@ -40,6 +40,7 @@ import org.teiid.designer.runtime.spi.EventManager;
 import org.teiid.designer.runtime.spi.ExecutionConfigurationEvent;
 import org.teiid.designer.runtime.spi.IExecutionAdmin;
 import org.teiid.designer.runtime.spi.ITeiidAdminInfo;
+import org.teiid.designer.runtime.spi.ITeiidConnectionInfo;
 import org.teiid.designer.runtime.spi.ITeiidDataSource;
 import org.teiid.designer.runtime.spi.ITeiidJdbcInfo;
 import org.teiid.designer.runtime.spi.ITeiidServer;
@@ -659,9 +660,13 @@ public class ExecutionAdmin implements IExecutionAdmin {
     private IStatus pingJdbc() {
         String host = teiidServer.getHost();
         ITeiidJdbcInfo teiidJdbcInfo = teiidServer.getTeiidJdbcInfo();
+
+        String protocol = ITeiidConnectionInfo.MM;
+        if (teiidJdbcInfo.isSecure())
+            protocol = ITeiidConnectionInfo.MMS;
         
         Connection teiidJdbcConnection = null;
-        String url = "jdbc:teiid:ping@mm://" + host + ':' + teiidJdbcInfo.getPort(); //$NON-NLS-1$
+        String url = "jdbc:teiid:ping@" + protocol + host + ':' + teiidJdbcInfo.getPort(); //$NON-NLS-1$
         
         try {
             admin.deployVDB("ping-vdb.xml", (InputStream)new ByteArrayInputStream(TEST_VDB.getBytes())); //$NON-NLS-1$
