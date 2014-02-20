@@ -50,6 +50,7 @@ import org.teiid.designer.runtime.spi.ITeiidJdbcInfo;
 import org.teiid.designer.runtime.spi.ITeiidServer;
 import org.teiid.designer.runtime.spi.ITeiidTranslator;
 import org.teiid.designer.runtime.spi.ITeiidVdb;
+import org.teiid.designer.runtime.spi.TeiidExecutionException;
 import org.teiid.designer.runtime.spi.TeiidPropertyDefinition;
 import org.teiid.designer.runtime.version.spi.ITeiidServerVersion;
 import org.teiid.designer.runtime.version.spi.TeiidServerVersion;
@@ -317,9 +318,13 @@ public class ExecutionAdmin implements IExecutionAdmin {
         // Verify the "typeName" exists.
         if (!this.dataSourceTypeNames.contains(typeName)) {
             if("connector-jdbc".equals(typeName)) {  //$NON-NLS-1$
-                throw new Exception(NLS.bind(Messages.jdcbSourceForClassNameNotFound, connProfileDriverClass, getServer()));
+                throw new TeiidExecutionException(
+                		ITeiidDataSource.ERROR_CODES.JDBC_DRIVER_SOURCE_NOT_FOUND,
+                		NLS.bind(Messages.jdcbSourceForClassNameNotFound, connProfileDriverClass, getServer()));
             } else {
-                throw new Exception(NLS.bind(Messages.dataSourceTypeDoesNotExist, typeName, getServer()));
+                throw new TeiidExecutionException(
+                		ITeiidDataSource.ERROR_CODES.DATA_SOURCE_TYPE_DOES_NOT_EXIST_ON_SERVER,
+                		NLS.bind(Messages.dataSourceTypeDoesNotExist, typeName, getServer()));
             }
         }
 
@@ -339,7 +344,9 @@ public class ExecutionAdmin implements IExecutionAdmin {
         }
 
         // We shouldn't get here if data source was created
-        throw new Exception(NLS.bind(Messages.errorCreatingDataSource, dsName, typeName));
+        throw new TeiidExecutionException(
+        		ITeiidDataSource.ERROR_CODES.DATA_SOURCE_COULD_NOT_BE_CREATED,
+        		NLS.bind(Messages.errorCreatingDataSource, dsName, typeName));
     }
 
     /*
