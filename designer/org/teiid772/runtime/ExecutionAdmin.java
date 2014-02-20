@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
@@ -45,6 +46,7 @@ import org.teiid.designer.runtime.spi.ITeiidJdbcInfo;
 import org.teiid.designer.runtime.spi.ITeiidServer;
 import org.teiid.designer.runtime.spi.ITeiidTranslator;
 import org.teiid.designer.runtime.spi.ITeiidVdb;
+import org.teiid.designer.runtime.spi.TeiidExecutionException;
 import org.teiid.designer.runtime.spi.TeiidPropertyDefinition;
 import org.teiid.jdbc.TeiidDriver;
 import org.teiid.logging.LogManager;
@@ -280,8 +282,17 @@ public class ExecutionAdmin implements IExecutionAdmin {
         }
 
         // Verify the "typeName" exists.
+        String connProfileDriverClass = properties.getProperty("driver-class");  //$NON-NLS-1$
         if (!this.dataSourceTypeNames.contains(typeName)) {
-            throw new Exception(NLS.bind(Messages.dataSourceTypeDoesNotExist, typeName, getServer()));
+        	if("connector-jdbc".equals(typeName)) {  //$NON-NLS-1$
+                throw new TeiidExecutionException(
+                		ITeiidDataSource.ERROR_CODES.JDBC_DRIVER_SOURCE_NOT_FOUND,
+                		NLS.bind(Messages.jdcbSourceForClassNameNotFound, connProfileDriverClass, getServer()));
+            } else {
+                throw new TeiidExecutionException(
+                		ITeiidDataSource.ERROR_CODES.DATA_SOURCE_TYPE_DOES_NOT_EXIST_ON_SERVER,
+                		NLS.bind(Messages.dataSourceTypeDoesNotExist, typeName, getServer()));
+            }
         }
 
         this.admin.createDataSource(jndiName, typeName, properties);
@@ -300,7 +311,9 @@ public class ExecutionAdmin implements IExecutionAdmin {
         }
 
         // We shouldn't get here if data source was created
-        throw new Exception(NLS.bind(Messages.errorCreatingDataSource, jndiName, typeName));
+        throw new TeiidExecutionException(
+        		ITeiidDataSource.ERROR_CODES.DATA_SOURCE_COULD_NOT_BE_CREATED,
+        		NLS.bind(Messages.errorCreatingDataSource, jndiName, typeName));
     }
 
     /*
