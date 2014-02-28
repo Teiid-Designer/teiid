@@ -26,7 +26,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-
 import org.teiid.core.util.EquivalenceUtil;
 import org.teiid.designer.query.sql.lang.ISPParameter;
 import org.teiid.query.QueryPlugin;
@@ -41,7 +40,7 @@ import org.teiid.query.sql.symbol.Expression;
 * The connector will utilize this class to set the appropriate values at the
 * datasource layer.
 */
-public class SPParameter implements Cloneable, ISPParameter {
+public class SPParameter implements Cloneable, ISPParameter<ElementSymbol> {
 
     /** Constant identifying an IN parameter */
     public static final int IN = ParameterInfo.IN.index();
