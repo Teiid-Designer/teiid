@@ -24,7 +24,6 @@ package org.teiid.query.sql.proc;
 
 import java.util.Collections;
 import java.util.List;
-
 import org.teiid.core.util.EquivalenceUtil;
 import org.teiid.core.util.HashCodeUtil;
 import org.teiid.designer.query.sql.proc.ICreateProcedureCommand;
@@ -44,7 +43,7 @@ import org.teiid.query.sql.visitor.SQLStringVisitor;
  * and Delete procedures.</p>
  */
 public class CreateProcedureCommand extends Command
-    implements ICreateProcedureCommand<Block, Expression, LanguageVisitor> {
+    implements ICreateProcedureCommand<Block, GroupSymbol, Expression, LanguageVisitor> {
 	
 	// top level block for the procedure
 	private Block block;

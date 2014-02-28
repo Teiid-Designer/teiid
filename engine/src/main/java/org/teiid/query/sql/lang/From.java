@@ -25,7 +25,6 @@ package org.teiid.query.sql.lang;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-
 import org.teiid.core.util.EquivalenceUtil;
 import org.teiid.core.util.HashCodeUtil;
 import org.teiid.designer.query.sql.lang.IFrom;
@@ -91,8 +90,8 @@ public class From implements LanguageObject, IFrom<FromClause, GroupSymbol, Lang
 	 * Set all the clauses
 	 * @param clauses List of {@link FromClause}
 	 */
-	public void setClauses(List<FromClause> clauses) {
-		this.clauses = clauses;
+	public void setClauses(List<? extends FromClause> clauses) {
+		this.clauses = (List<FromClause>)clauses;
 	}
 	
 	
