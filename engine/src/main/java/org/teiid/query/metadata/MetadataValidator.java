@@ -34,6 +34,7 @@ import org.teiid.adminapi.impl.VDBMetaData;
 import org.teiid.api.exception.query.QueryResolverException;
 import org.teiid.core.TeiidException;
 import org.teiid.core.types.DataTypeManager;
+import org.teiid.designer.validator.IValidator.IValidatorFailure.VFStatus;
 import org.teiid.language.SQLConstants;
 import org.teiid.logging.LogConstants;
 import org.teiid.logging.LogManager;
@@ -325,7 +326,7 @@ public class MetadataValidator {
     		}
 			if(resolverReport != null && resolverReport.hasItems()) {
 				for (ValidatorFailure v:resolverReport.getItems()) {
-					log(report, model, v.getStatus() == ValidatorFailure.Status.ERROR?Severity.ERROR:Severity.WARNING, v.getMessage());
+					log(report, model, v.getStatus() == VFStatus.ERROR?Severity.ERROR:Severity.WARNING, v.getMessage());
 				}
 			}
 		} catch (TeiidException e) {

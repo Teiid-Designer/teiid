@@ -7,8 +7,6 @@
 */
 package org.teiid84.sql.impl.validator;
 
-import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.Status;
 import org.teiid.designer.validator.IValidator.IValidatorFailure;
 import org.teiid.query.validator.ValidatorFailure;
 
@@ -27,10 +25,8 @@ public class WrappedValidatorFailure implements IValidatorFailure {
     }
 
     @Override
-    public IStatus getStatus() {
-        return new Status(
-                          failure.getStatus() == ValidatorFailure.Status.ERROR ? IStatus.ERROR : IStatus.WARNING, 
-                          "Validation Plugin", 0, failure.toString(), null); //$NON-NLS-1$
+    public VFStatus getStatus() {
+        return failure.getStatus();
     }
     
 }
