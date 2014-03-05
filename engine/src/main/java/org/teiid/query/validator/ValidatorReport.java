@@ -24,11 +24,10 @@ package org.teiid.query.validator;
 
 import java.util.Collection;
 import java.util.Iterator;
-
+import org.teiid.designer.validator.IValidator;
 import org.teiid.query.QueryPlugin;
 import org.teiid.query.report.ActivityReport;
 import org.teiid.query.sql.LanguageObject;
-import org.teiid.query.validator.ValidatorFailure.Status;
 
 
 public class ValidatorReport extends ActivityReport<ValidatorFailure> {
@@ -78,7 +77,7 @@ public class ValidatorReport extends ActivityReport<ValidatorFailure> {
     
     public void handleValidationWarning(String message) {
     	ValidatorFailure vf = new ValidatorFailure(message);
-    	vf.setStatus(Status.WARNING);
+    	vf.setStatus(IValidator.IValidatorFailure.VFStatus.WARNING);
         this.addItem(vf);
     }
     
