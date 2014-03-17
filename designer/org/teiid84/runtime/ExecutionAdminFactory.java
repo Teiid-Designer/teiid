@@ -12,6 +12,7 @@ import org.teiid.designer.query.IQueryService;
 import org.teiid.designer.runtime.spi.IExecutionAdmin;
 import org.teiid.designer.runtime.spi.IExecutionAdminFactory;
 import org.teiid.designer.runtime.spi.ITeiidServer;
+import org.teiid.designer.runtime.version.spi.ITeiidServerVersion;
 import org.teiid.designer.type.IDataTypeManagerService;
 import org.teiid.jdbc.TeiidDriver;
 import org.teiid84.TeiidRuntimePlugin;
@@ -33,7 +34,7 @@ public class ExecutionAdminFactory implements IExecutionAdminFactory {
     }
     
     @Override
-    public IDataTypeManagerService getDataTypeManagerService() {
+    public IDataTypeManagerService getDataTypeManagerService(ITeiidServerVersion teiidVersion) {
         if (dataTypeManagerService == null) {
             dataTypeManagerService = new DataTypeManagerService();
         }
@@ -42,12 +43,12 @@ public class ExecutionAdminFactory implements IExecutionAdminFactory {
     }
 
     @Override
-    public Driver getTeiidDriver() {
+    public Driver getTeiidDriver(ITeiidServerVersion teiidVersion) {
         return TeiidDriver.getInstance();
     }
 
     @Override
-    public IQueryService getQueryService() {
+    public IQueryService getQueryService(ITeiidServerVersion teiidVersion) {
         if (queryService == null) {
             queryService = new QueryService();
         }
