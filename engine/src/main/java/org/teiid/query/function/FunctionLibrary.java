@@ -28,7 +28,6 @@ import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.TreeSet;
-
 import org.teiid.api.exception.query.InvalidFunctionException;
 import org.teiid.api.exception.query.QueryResolverException;
 import org.teiid.core.types.DataTypeManager;
@@ -120,6 +119,11 @@ public class FunctionLibrary implements IFunctionLibrary<FunctionForm, FunctionD
         	}
         }
         return form;
+    }
+
+    @Override
+    public boolean hasFunctionMethod(String name, int length) {
+        return findFunctionForm(name, length) != null;
     }
 
     @Override
