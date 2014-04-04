@@ -26,7 +26,6 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-
 import org.teiid.core.types.DataTypeManager;
 import org.teiid.designer.udf.IFunctionLibrary;
 import org.teiid.metadata.FunctionMethod;
@@ -57,9 +56,10 @@ public class SystemSource extends UDFSource implements FunctionCategoryConstants
     
     /**
      * Construct a source of system metadata.
+     * @param classLoader 
      */
-    public SystemSource(boolean allowEnvFunction) {
-    	super(new ArrayList<FunctionMethod>());
+    public SystemSource(boolean allowEnvFunction, ClassLoader classLoader) {
+    	super(new ArrayList<FunctionMethod>(), classLoader);
 		// +, -, *, /
         addArithmeticFunction(SourceSystemFunctions.ADD_OP, QueryPlugin.Util.getString("SystemSource.Add_desc"), "plus", QueryPlugin.Util.getString("SystemSource.Add_result_desc")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ 
         addArithmeticFunction(SourceSystemFunctions.SUBTRACT_OP, QueryPlugin.Util.getString("SystemSource.Subtract_desc"), "minus", QueryPlugin.Util.getString("SystemSource.Subtract_result_desc")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ 

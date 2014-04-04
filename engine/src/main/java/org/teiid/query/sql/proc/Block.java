@@ -24,7 +24,6 @@ package org.teiid.query.sql.proc;
 
 import java.util.ArrayList;
 import java.util.List;
-
 import org.teiid.core.util.EquivalenceUtil;
 import org.teiid.core.util.StringUtil;
 import org.teiid.designer.query.sql.proc.IBlock;
@@ -177,7 +176,7 @@ public class Block extends Statement implements Labeled, IBlock<Statement, Langu
         return this.atomic == other.atomic 
         && StringUtil.equalsIgnoreCase(label, other.label)
         && EquivalenceUtil.areEqual(getStatements(), other.getStatements())
-        && EquivalenceUtil.areEqual(exceptionGroup, exceptionGroup)
+        && EquivalenceUtil.areEqual(exceptionGroup, other.exceptionGroup)
         && EquivalenceUtil.areEqual(exceptionStatements, exceptionStatements);
     }    
 

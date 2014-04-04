@@ -24,6 +24,7 @@ package org.teiid.query.validator;
 
 import java.util.*;
 
+import org.teiid.designer.validator.IValidator.IValidatorFailure.VFStatus;
 import org.teiid.query.report.ReportItem;
 import org.teiid.query.sql.LanguageObject;
 
@@ -38,7 +39,7 @@ public class ValidatorFailure extends ReportItem {
 
     // Don't want to pass this around, so make it transient
     private transient Collection<LanguageObject> invalidObjects;  
-    private Status status = Status.ERROR;
+    private VFStatus status = VFStatus.ERROR;
         
     public ValidatorFailure(String description) { 
         super(VALIDATOR_FAILURE);
@@ -58,11 +59,11 @@ public class ValidatorFailure extends ReportItem {
         this.invalidObjects = new ArrayList<LanguageObject>(objects);
     }
     
-    public void setStatus(Status status) {
+    public void setStatus(VFStatus status) {
 		this.status = status;
 	}
     
-    public Status getStatus() {
+    public VFStatus getStatus() {
 		return status;
 	}
     
