@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.TreeMap;
-
 import org.teiid.adminapi.impl.ModelMetaData;
 import org.teiid.adminapi.impl.VDBMetaData;
 import org.teiid.core.TeiidRuntimeException;
@@ -116,7 +115,8 @@ public class SystemMetadata {
 		systemStore = loadSchema(vdb, p, "SYS", parser).asMetadataStore(); //$NON-NLS-1$
 		systemStore.addDataTypes(dataTypes);
 		loadSchema(vdb, p, "SYSADMIN", parser).mergeInto(systemStore); //$NON-NLS-1$
-		TransformationMetadata tm = new TransformationMetadata(vdb, new CompositeMetadataStore(systemStore), null, new SystemFunctionManager().getSystemFunctions(), null);
+		SystemFunctionManager systemFunctionManager = new SystemFunctionManager(getClass().getClassLoader());
+        TransformationMetadata tm = new TransformationMetadata(vdb, new CompositeMetadataStore(systemStore), null, systemFunctionManager.getSystemFunctions(), null);
 		vdb.addAttchment(QueryMetadataInterface.class, tm);
 		MetadataValidator validator = new MetadataValidator(this.typeMap, parser);
 		ValidatorReport report = validator.validate(vdb, systemStore);
