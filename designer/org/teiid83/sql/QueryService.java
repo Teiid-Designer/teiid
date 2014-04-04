@@ -83,7 +83,7 @@ public class QueryService implements IQueryService {
 
     private IQueryParser queryParser;
 
-    private final SystemFunctionManager systemFunctionManager = new SystemFunctionManager();
+    private final SystemFunctionManager systemFunctionManager = new SystemFunctionManager(QueryService.class.getClassLoader());
     
     private final SyntaxFactory factory = new SyntaxFactory();
 
@@ -123,14 +123,6 @@ public class QueryService implements IQueryService {
 
     @Override
     public IFunctionLibrary createFunctionLibrary() {
-        /*
-         * System function manager needs this classloader since it uses reflection to instantiate classes, 
-         * such as FunctionMethods. The default classloader is taken from the thread, which in turn takes
-         * a random plugin. Since no plugin depends on this plugin, ClassNotFound exceptions result.
-         * 
-         * So set the class loader to the one belonging to this plugin.
-         */
-        systemFunctionManager.setClassloader(getClass().getClassLoader());
         return new FunctionLibrary(systemFunctionManager.getSystemFunctions(), new FunctionTree[0]);
     }
 
@@ -165,7 +157,7 @@ public class QueryService implements IQueryService {
 
             FunctionTree tree = functionTrees.get(descriptor.getSchema());
             if (tree == null) {
-                tree = new FunctionTree(descriptor.getSchema(), new UDFSource(Collections.EMPTY_LIST), false);
+                tree = new FunctionTree(descriptor.getSchema(), new UDFSource(Collections.EMPTY_LIST, getClass().getClassLoader()), false);
                 functionTrees.put(descriptor.getSchema(), tree);
             }
 
@@ -173,14 +165,6 @@ public class QueryService implements IQueryService {
             fd.setMetadataID(descriptor.getMetadataID());
         }
 
-        /*
-         * System function manager needs this classloader since it uses reflection to instantiate classes, 
-         * such as FunctionMethods. The default classloader is taken from the thread, which in turn takes
-         * a random plugin. Since no plugin depends on this plugin, ClassNotFound exceptions result.
-         * 
-         * So set the class loader to the one belonging to this plugin.
-         */
-        systemFunctionManager.setClassloader(getClass().getClassLoader());
         return new FunctionLibrary(systemFunctionManager.getSystemFunctions(), 
                                                       functionTrees.values().toArray(new FunctionTree[0]));
     }
