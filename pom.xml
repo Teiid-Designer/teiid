@@ -11,7 +11,7 @@
     <artifactId>org.teiid.8.3.x</artifactId>
     <packaging>eclipse-plugin</packaging>
     <name>teiid runtime client 8.3.x</name>
-	<version>8.3.2-SNAPSHOT</version>
+	<version>8.3.3-SNAPSHOT</version>
     <description>Federated SQL and XML query engine.</description>
     <properties>
         <site.url>http://www.jboss.org/teiid</site.url>
